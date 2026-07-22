@@ -125,6 +125,11 @@ other Skopeo destinations, including OCI layouts and registries.
 
 Both volumes are required.
 
+### Reuse a read-only host Nix store
+
+See [Upper/lower Nix store](docs/UPPER_LOWER.md) to reuse the host's
+read-only Nix store beneath a container-specific writable store.
+
 ### Change the running system
 
 Account changes use the normal Linux tools and persist in `/data/etc`:

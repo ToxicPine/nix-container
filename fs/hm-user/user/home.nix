@@ -1,3 +1,6 @@
 _: {
-  imports = [ (import ../../hm-base { }) ];
+  imports = [
+    (import ../../hm-base { })
+    ./managed.nix
+  ];
 }

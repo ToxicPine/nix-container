@@ -8,7 +8,8 @@ ACCOUNT_DATA_DIR="${DATA}/etc"
 command_name="seed-user-hm"
 user_name="${1:-}"
 
-if [[ "$(id -u)" != "0" ]]; then
+current_user_id="$(id -u)"
+if [[ "${current_user_id}" != "0" ]]; then
   echo "${command_name}: must run as root" >&2
   exit 100
 fi

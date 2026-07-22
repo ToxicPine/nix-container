@@ -1,10 +1,10 @@
 {
+  nixSupervisionPackages,
   pkgs,
-  supervisionPackages,
 }:
 
 let
-  inherit (supervisionPackages) treeRunner;
+  inherit (nixSupervisionPackages) treeRunner;
 
   registerUserTree = pkgs.callPackage ./register-user-tree {
     inherit treeRunner;

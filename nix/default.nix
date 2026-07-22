@@ -29,17 +29,20 @@ let
 
   hm = import ../lib/hm.nix {
     inherit
-      pkgs
-      home-manager
       declaredUsers
       hmPolicy
+      home-manager
+      pkgs
       ;
   };
 in
 import ../lib/image.nix {
-  inherit pkgs n2c;
-  supervisionPackages = nixSupervisionPackages;
-  system = systemConfig;
-  inherit declaredUsers;
+  inherit
+    declaredUsers
+    n2c
+    nixSupervisionPackages
+    pkgs
+    ;
   inherit (hm) runtime;
+  system = systemConfig;
 }

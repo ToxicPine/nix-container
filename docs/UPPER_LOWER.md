@@ -1,0 +1,129 @@
+# Upper/lower Nix store
+
+This mode is for running many Nix-based containers without storing and fetching
+the same package content for every instance. A large host `/nix/store` becomes
+the shared package cache; each container stores only paths and state unique to
+it. When Home Manager profiles are built at runtime instead of baked into the
+image, the images can remain small while still starting from a heavily
+pre-populated package set.
+
+In short: one shared lower store holds the bulk of the packages, while many
+small upper stores provide independent writable containers.
+
+The host constructs the OverlayFS mount and gives the container its merged
+view. Mounting OverlayFS inside the container would require the broad
+`CAP_SYS_ADMIN` capability. This design keeps that capability out of the
+container: it never invokes `mount` or manages OverlayFS.
+
+The host's `/nix/store` becomes a shared, read-only lower store. Each container
+has a private upper store containing only instance-specific paths and metadata.
+
+```mermaid
+flowchart TD
+    lower["Host /nix/store<br/>shared read-only lower"]
+    lower --> alpha["Alpha overlay<br/>private upper"]
+    lower --> bravo["Bravo overlay<br/>private upper"]
+    lower --> charlie["Charlie overlay<br/>private upper"]
+    alpha --> containerA["Container A /nix/store"]
+    bravo --> containerB["Container B /nix/store"]
+    charlie --> containerC["Container C /nix/store"]
+```
+
+Because Nix store paths are immutable and content-addressed, many containers
+can reuse one physical copy of common packages. Paths already present in the
+lower store need not be downloaded or copied into each container's upper.
+
+## Lightweight images
+
+If the host store contains the packages required by the Home Manager profiles,
+the image does not need to embed those profile closures. Disable profile builds
+in `nix/default.nix`:
+
+```nix
+hmPolicy = {
+  buildProfiles = false;
+  activateOnBoot = true;
+  rebuildOnBoot = true;
+};
+```
+
+Profiles are then built when the container boots. Their generations remain
+private, while package paths can come from the shared lower store. Pre-populate
+and retain the desired packages in the host store: paths fetched by one
+container enter only its private upper store.
+
+## Enable the overlay store
+
+The feature is disabled when the setting is omitted. To enable it, add the
+setting directly to the `image.nix` call in `nix/default.nix`:
+
+```nix
+import ../lib/image.nix {
+  # Existing image arguments...
+  localOverlayStore.enable = true;
+}
+```
+
+The container then expects:
+
+- a host-created OverlayFS mount at `/nix/store`;
+- the host's `/nix` mounted read-only at `/host/nix`, providing lower-store
+  metadata;
+- a private `/nix` volume for its database and profiles;
+- a private OverlayFS upper directory paired with that volume.
+
+At boot, the entrypoint verifies that `/nix/store` is OverlayFS and that the
+mount providing `/host/nix` is read-only. With the option disabled, `/nix`
+works as an ordinary private store and neither host mount is required.
+
+## Prepare an instance on the host
+
+Each instance needs distinct upper, work, and merged directories. Its upper and
+work directories must be on the same filesystem.
+
+```sh
+sudo mkdir -p \
+  /var/lib/nix-container/alpha/upper \
+  /var/lib/nix-container/alpha/work \
+  /var/lib/nix-container/alpha/merged
+
+sudo mount -t overlay overlay \
+  -o lowerdir=/nix/store,upperdir=/var/lib/nix-container/alpha/upper,workdir=/var/lib/nix-container/alpha/work \
+  /var/lib/nix-container/alpha/merged
+```
+
+This command runs on the host before the container starts.
+
+## Run the container
+
+```sh
+docker run --detach \
+  --name alpha \
+  --mount type=bind,source=/var/lib/nix-container/alpha/merged,target=/nix/store \
+  --mount type=bind,source=/nix,target=/host/nix,readonly \
+  --volume alpha-data:/data \
+  --volume alpha-nix:/nix \
+  system-image:latest
+```
+
+For another instance, reuse `lowerdir=/nix/store` but create new upper, work,
+and merged directories and new `/data` and `/nix` volumes.
+
+## Lifecycle constraints
+
+An instance's OverlayFS upper directory and `/nix` volume are two halves of the
+same persistent Nix state. The upper directory contains its private store
+files; the volume contains the Nix database and profiles that refer to the
+combined lower and upper stores. Give both to exactly one instance, and back
+up, restore, migrate, or remove them together. Never share either half or pair
+it with state from another instance. When switching from an ordinary store to
+an overlay store, start with a fresh upper directory, work directory, and
+`/nix` volume.
+
+The lower store may grow while containers run, but existing paths and metadata
+must not change or disappear. Keep shared paths rooted and coordinate host
+garbage collection with container lifetimes.
+
+See the upstream
+[Nix local overlay store documentation](https://nix.dev/manual/nix/stable/store/types/experimental-local-overlay-store)
+for the underlying constraints.

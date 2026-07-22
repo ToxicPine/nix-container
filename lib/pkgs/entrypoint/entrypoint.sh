@@ -5,6 +5,7 @@ DATA_DIR="/data"
 ACCOUNT_DATA_DIR="${DATA_DIR}/etc"
 BUSYBOX="/opt/bootstrap/bin/busybox"
 BOOTSTRAP_CP="/opt/bootstrap/bin/cp"
+LOCAL_OVERLAY_STORE_ENABLED=@localOverlayStoreEnabled@
 
 # /nix may be an empty volume, so invoke the static BusyBox multicall binary
 # directly until the image's store seed has been copied into place.
@@ -42,8 +43,57 @@ seed_nix_store() {
   done
 }
 
+validate_local_overlay_store_mounts() {
+  lower_store_path="/host/nix/store"
+  lower_store_db="/host/nix/var/nix/db/db.sqlite"
+
+  if ! test -d "${lower_store_path}" || ! test -f "${lower_store_db}"; then
+    echo "entrypoint: local overlay store requires the host's /nix mounted read-only below /host" >&2
+    exit 1
+  fi
+
+  lower_mount_point=""
+  lower_mount_options=""
+  while IFS=' ' read -r \
+    _mount_id _parent_id _device _root mount_point mount_options _rest; do
+    case "${lower_store_path}/" in
+      "${mount_point%/}/"*)
+        if test "${#mount_point}" -gt "${#lower_mount_point}"; then
+          lower_mount_point="${mount_point}"
+          lower_mount_options="${mount_options}"
+        fi
+        ;;
+      *) ;;
+    esac
+  done </proc/self/mountinfo
+
+  case ",${lower_mount_options}," in
+    *,ro,*) ;;
+    *)
+      echo "entrypoint: the mount providing /host/nix must be read-only" >&2
+      exit 1
+      ;;
+  esac
+
+  merged_store_is_overlay=false
+  while IFS=' ' read -r _source mount_point filesystem_type _options _rest; do
+    if test "${mount_point}" = /nix/store && test "${filesystem_type}" = overlay; then
+      merged_store_is_overlay=true
+      break
+    fi
+  done </proc/mounts
+
+  if test "${merged_store_is_overlay}" != true; then
+    echo "entrypoint: local overlay store requires a host-mounted OverlayFS at /nix/store" >&2
+    exit 1
+  fi
+}
+
 # Reconstruct the writable Nix store from the image seed before S6 starts the
 # daemon that will own it for the rest of the container lifetime.
+if test "${LOCAL_OVERLAY_STORE_ENABLED}" = true; then
+  validate_local_overlay_store_mounts
+fi
 seed_nix_store
 
 seed_account_file() {

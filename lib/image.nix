@@ -1,10 +1,11 @@
 {
-  pkgs,
-  n2c,
-  supervisionPackages,
-  system,
   declaredUsers,
+  localOverlayStore ? { },
+  n2c,
+  nixSupervisionPackages,
+  pkgs,
   runtime ? { },
+  system,
 }:
 
 let
@@ -48,21 +49,41 @@ let
     };
   };
 
+  localOverlayStoreType = types.submodule {
+    options.enable = mkOption {
+      type = types.bool;
+      default = false;
+    };
+  };
+
   schemaModule = {
     options = {
       declaredUsers = mkOption { type = types.attrsOf userType; };
-      system = mkOption { type = systemType; };
+      localOverlayStore = mkOption {
+        type = localOverlayStoreType;
+        default = { };
+      };
       runtime = mkOption {
         type = runtimeType;
         default = { };
       };
+      system = mkOption { type = systemType; };
     };
   };
 
   evaluatedConfiguration = lib.evalModules {
     modules = [
       schemaModule
-      { config = { inherit declaredUsers system runtime; }; }
+      {
+        config = {
+          inherit
+            declaredUsers
+            localOverlayStore
+            runtime
+            system
+            ;
+        };
+      }
     ];
   };
 
@@ -86,6 +107,20 @@ let
   nixBuildUserCount = 10;
   staticBootstrapBusybox = pkgs.pkgsStatic.busybox;
   staticBootstrapCoreutils = pkgs.pkgsStatic.coreutils;
+  localOverlayStoreEnabled = imageConfig.localOverlayStore.enable;
+  localOverlayStoreUrl = "local-overlay://?lower-store=%2Fhost%2F%3Fread-only%3Dtrue&check-mount=false";
+  nixExperimentalFeatures = [
+    "nix-command"
+    "flakes"
+  ]
+  ++ lib.optionals localOverlayStoreEnabled [
+    "local-overlay-store"
+    "read-only-local-store"
+  ];
+
+  entrypoint = imagePkgs.callPackage ./pkgs/entrypoint {
+    inherit localOverlayStoreEnabled;
+  };
 
   users = lib.mapAttrsToList (name: user: {
     inherit name;
@@ -93,7 +128,7 @@ let
   }) imageConfig.declaredUsers;
 
   supervision = import ./pkgs/supervision {
-    inherit pkgs supervisionPackages;
+    inherit nixSupervisionPackages pkgs;
   };
 
   shadowMaintHooks = imagePkgs.callPackage ./pkgs/shadow-maint-hooks {
@@ -307,9 +342,11 @@ let
   homeManagerLayerBudget = maximumImageLayerCount - coreRuntimeLayerCount - rootFilesystemLayerCount;
   nixStorePrefix = "/nix-base";
 
-  # These packages are exposed as root-filesystem links. Only the static
-  # BusyBox under /opt/bootstrap is executable before /nix is seeded.
+  # These packages are exposed as root-filesystem links after /nix is seeded.
+  # Before then, OCI invokes entrypoint through its relocated /nix-base path;
+  # the script itself uses only the static tools under /opt/bootstrap.
   rootFilesystemPackages = [
+    entrypoint
     pkgs.bashInteractive
     pkgs.coreutils
     pkgs.dockerTools.binSh
@@ -408,7 +445,7 @@ let
     hosts: files dns
     EOF
     cat > "$out/etc/nix/nix.conf" <<'EOF'
-    experimental-features = nix-command flakes
+    experimental-features = ${lib.concatStringsSep " " nixExperimentalFeatures}
     sandbox = false
     substituters = https://cache.nixos.org/
     EOF
@@ -472,13 +509,14 @@ in
   ];
 
   config = {
-    Entrypoint = [ "${mutableConfigPrefix}/bin/entrypoint" ];
+    Entrypoint = [ "${nixStorePrefix}/store/${builtins.baseNameOf "${entrypoint}"}/bin/entrypoint" ];
     Env = [
       "PATH=/bin:/sbin:/usr/bin:/usr/sbin"
       "LD_LIBRARY_PATH=/lib"
       "NIX_PAGER=cat"
       "HOME=/root"
-    ];
+    ]
+    ++ lib.optional localOverlayStoreEnabled "SYSTEM_IMAGE_NIX_DAEMON_STORE=${localOverlayStoreUrl}";
     ExposedPorts = lib.listToAttrs (
       map (port: lib.nameValuePair "${toString port}/tcp" { }) imageConfig.system.exposedPorts
     );

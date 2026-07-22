@@ -99,8 +99,8 @@ activate_home_manager_users() {
   done <<<"${configured_users}"
 
   for index in "${!activation_pids[@]}"; do
-    if ! wait "${activation_pids[$index]}"; then
-      echo "Warning: Home Manager boot activation failed for ${activation_users[$index]}" >&2
+    if ! wait "${activation_pids[${index}]}"; then
+      echo "Warning: Home Manager boot activation failed for ${activation_users[${index}]}" >&2
     fi
   done
 }
