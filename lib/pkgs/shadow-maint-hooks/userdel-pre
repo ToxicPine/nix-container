@@ -1,0 +1,6 @@
+#!@runtimeShell@
+# shellcheck shell=sh
+set -eu
+
+: "${SUBJECT:?userdel did not provide SUBJECT}"
+exec @stopUserTrees@ "${SUBJECT}"

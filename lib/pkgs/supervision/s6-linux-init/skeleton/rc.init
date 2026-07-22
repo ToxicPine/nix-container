@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+# PID 1 and the root scan are ready. Complete user activation; PID 1 remains
+# responsible for the container lifetime after this hook returns.
+exec s6-envdir -I /run/s6-linux-init-env system-image-activate-home-manager-users "$@"

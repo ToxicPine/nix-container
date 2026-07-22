@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command_name="read-managed-hm"
+user="${KELLINGRAD_USER:-${USER:-}}"
+
+if [[ -z "${user}" ]] || { [[ "${user}" = "root" ]] && [[ -z "${KELLINGRAD_USER:-}" ]]; }; then
+  echo "${command_name}: set KELLINGRAD_USER when running as root" >&2
+  exit 1
+fi
+
+uid="$(id -u -- "${user}" 2>/dev/null || true)"
+gid="$(id -g -- "${user}" 2>/dev/null || true)"
+if [[ -z "${uid}" || -z "${gid}" ]]; then
+  echo "${command_name}: unknown user ${user}" >&2
+  exit 1
+fi
+
+current_uid="$(id -u)"
+if [[ "${current_uid}" != "${uid}" ]]; then
+  if [[ "${current_uid}" != "0" ]]; then
+    echo "${command_name}: run as ${user} or as root with KELLINGRAD_USER=${user}" >&2
+    exit 1
+  fi
+  exec setpriv --reuid="${uid}" --regid="${gid}" --init-groups \
+    env HOME="/home/${user}" USER="${user}" PATH="${PATH}" KELLINGRAD_USER="${user}" \
+    "$0"
+fi
+
+managed_file="/home/${user}/.nixcfg/managed.nix"
+
+if [[ ! -f "${managed_file}" ]]; then
+  echo "${command_name}: no managed.nix found at ${managed_file}; run write-managed-hm --reset" >&2
+  exit 1
+fi
+
+while IFS= read -r line || [[ -n "${line}" ]]; do
+  printf '%s\n' "${line}"
+done <"${managed_file}"

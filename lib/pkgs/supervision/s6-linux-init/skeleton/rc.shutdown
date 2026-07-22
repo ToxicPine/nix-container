@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+# Stop user-owned s6-rc states in dependency order while their supervision
+# trees are still available. s6-linux-init performs final tree teardown.
+exec s6-envdir -I /run/s6-linux-init-env system-image-stop-user-trees

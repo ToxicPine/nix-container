@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP=/opt/app
+user="${USER:?USER must be set}"
+home_nix="${APP}/hm-user/${user}/home.nix"
+managed_nix="${APP}/hm-user/${user}/managed.nix"
+
+if [[ ! -f "${home_nix}" ]]; then
+  echo "refresh-system: no home.nix found at ${home_nix}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${managed_nix}" ]]; then
+  echo "refresh-system: no managed.nix found at ${managed_nix}; run write-managed-hm --reset" >&2
+  exit 1
+fi
+
+result=$(nix-build \
+  --no-out-link \
+  --argstr user "${user}" \
+  "${APP}/hm-user/refresh.nix")
+
+"${result}/activate"

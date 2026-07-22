@@ -1,0 +1,83 @@
+diff --git a/configure.ac b/configure.ac
+index 565b34b..82af921 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -45,7 +45,7 @@ AC_CHECK_HEADER([shadow.h],[],[AC_MSG_ERROR([You need a libc with shadow.h])])
+ 
+ AC_CHECK_FUNCS([arc4random_buf \
+ 	getentropy getrandom \
+-	lckpwdf lutimes \
++	lutimes \
+ 	updwtmpx innetgr \
+ 	getspnam_r \
+ 	rpmatch \
+diff --git a/lib/defines.h b/lib/defines.h
+index 1ad5f99..8c0610e 100644
+--- a/lib/defines.h
++++ b/lib/defines.h
+@@ -137,19 +137,25 @@
+ #define WEEK (7*DAY)
+ 
+ #ifndef PASSWD_FILE
+-#define PASSWD_FILE "/etc/passwd"
++#define PASSWD_FILE "/data/etc/passwd"
+ #endif
+ 
+ #ifndef GROUP_FILE
+-#define GROUP_FILE "/etc/group"
++#define GROUP_FILE "/data/etc/group"
+ #endif
+ 
+ #ifndef SUBUID_FILE
+-#define SUBUID_FILE "/etc/subuid"
++#define SUBUID_FILE "/data/etc/subuid"
+ #endif
+ 
+ #ifndef SUBGID_FILE
+-#define SUBGID_FILE "/etc/subgid"
++#define SUBGID_FILE "/data/etc/subgid"
+ #endif
+ 
++#undef _PATH_SHADOW
++#define _PATH_SHADOW "/data/etc/shadow"
++
++#undef _PATH_GSHADOW
++#define _PATH_GSHADOW "/data/etc/gshadow"
++
+ /*
+  * string to use for the pw_passwd field in /etc/passwd when using
+  * shadow passwords - most systems use "x" but there are a few
+diff --git a/lib/getdef.c b/lib/getdef.c
+index 041394f..c0af22d 100644
+--- a/lib/getdef.c
++++ b/lib/getdef.c
+@@ -176,6 +176,6 @@ static const char* sysconfdir = "/etc";
+ #else
+ #ifndef LOGINDEFS
+-#define LOGINDEFS "/etc/login.defs"
++#define LOGINDEFS "/data/etc/login.defs"
+ #endif
+ 
+ static const char* def_fname = LOGINDEFS;	/* login config defs file       */
+diff --git a/src/useradd.c b/src/useradd.c
+index 27a6171..8a9ddfe 100644
+--- a/src/useradd.c
++++ b/src/useradd.c
+@@ -80,12 +80,12 @@
+ 
+ 
+ #ifndef SKEL_DIR
+-#define SKEL_DIR "/etc/skel"
++#define SKEL_DIR "/opt/defaults/skel"
+ #endif
+ #ifndef USRSKELDIR
+ #define USRSKELDIR "/usr/etc/skel"
+ #endif
+ #ifndef USER_DEFAULTS_FILE
+-#define USER_DEFAULTS_FILE "/etc/default/useradd"
+-#define NEW_USER_FILE "/etc/default/nuaddXXXXXX"
++#define USER_DEFAULTS_FILE "/data/etc/default/useradd"
++#define NEW_USER_FILE "/data/etc/default/nuaddXXXXXX"
+ #endif
+ 
+ /*

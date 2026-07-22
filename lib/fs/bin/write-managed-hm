@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command_name="write-managed-hm"
+user="${KELLINGRAD_USER:-${USER:-}}"
+reset=0
+original_args=("$@")
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${command_name} [--reset]
+
+Write the current user's managed Home Manager module.
+EOF
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+  --reset)
+    reset=1
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+  esac
+  shift
+done
+
+if [[ -z "${user}" ]] || { [[ "${user}" = "root" ]] && [[ -z "${KELLINGRAD_USER:-}" ]]; }; then
+  echo "${command_name}: set KELLINGRAD_USER when running as root" >&2
+  exit 1
+fi
+
+uid="$(id -u -- "${user}" 2>/dev/null || true)"
+gid="$(id -g -- "${user}" 2>/dev/null || true)"
+if [[ -z "${uid}" || -z "${gid}" ]]; then
+  echo "${command_name}: unknown user ${user}" >&2
+  exit 1
+fi
+
+current_uid="$(id -u)"
+if [[ "${current_uid}" != "${uid}" ]]; then
+  if [[ "${current_uid}" != "0" ]]; then
+    echo "${command_name}: run as ${user} or as root with KELLINGRAD_USER=${user}" >&2
+    exit 1
+  fi
+  exec setpriv --reuid="${uid}" --regid="${gid}" --init-groups \
+    env HOME="/home/${user}" USER="${user}" PATH="${PATH}" KELLINGRAD_USER="${user}" \
+    KELLINGRAD_MANAGED_MODULE_B64="${KELLINGRAD_MANAGED_MODULE_B64:-}" \
+    "$0" "${original_args[@]}"
+fi
+
+nixcfg="/home/${user}/.nixcfg"
+managed_file="${nixcfg}/managed.nix"
+empty_module='{ lib, ... }:
+{
+}
+'
+
+if [[ -L "${nixcfg}" ]]; then
+  echo "${command_name}: refusing symlinked ${nixcfg}" >&2
+  exit 1
+fi
+mkdir -p "${nixcfg}"
+
+if [[ "${reset}" = "1" ]]; then
+  printf '%s' "${empty_module}" >"${managed_file}"
+  exit 0
+fi
+
+module_b64="${KELLINGRAD_MANAGED_MODULE_B64:?KELLINGRAD_MANAGED_MODULE_B64 must be set}"
+module_tmp="$(mktemp)"
+trap 'rm -f "$module_tmp"' EXIT
+
+printf '%s' "${module_b64}" | base64 -d >"${module_tmp}"
+mv "${module_tmp}" "${managed_file}"

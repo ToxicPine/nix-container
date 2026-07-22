@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP="${KELLINGRAD_APP:-/opt/app}"
+DEFAULTS="${KELLINGRAD_DEFAULTS:-/opt/defaults}"
+DATA="${KELLINGRAD_DATA:-/data}"
+command_name="reset-system"
+refresh=1
+original_args=("$@")
+
+usage() {
+  cat >&2 <<EOF
+Usage: ${command_name} [--no-refresh]
+
+Reset the current user's ~/.nixcfg Home Manager config to factory defaults.
+EOF
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+  --no-refresh)
+    refresh=0
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+  esac
+  shift
+done
+
+user="${KELLINGRAD_USER:-${USER:-}}"
+if [[ -z "${user}" ]] || { [[ "${user}" = "root" ]] && [[ -z "${KELLINGRAD_USER:-}" ]]; }; then
+  echo "${command_name}: set KELLINGRAD_USER when running as root" >&2
+  exit 1
+fi
+
+uid="$(id -u -- "${user}" 2>/dev/null || true)"
+gid="$(id -g -- "${user}" 2>/dev/null || true)"
+if [[ -z "${uid}" || -z "${gid}" ]]; then
+  echo "${command_name}: unknown user ${user}" >&2
+  exit 1
+fi
+
+current_uid="$(id -u)"
+if [[ "${current_uid}" != "${uid}" ]]; then
+  if [[ "${current_uid}" != "0" ]]; then
+    echo "${command_name}: run as ${user} or as root with KELLINGRAD_USER=${user}" >&2
+    exit 1
+  fi
+
+  persist="${DATA}/homes/${user}"
+  mkdir -p "${persist}" "${APP}/hm-user"
+  chown "${uid}:${gid}" "${persist}"
+  chmod 0700 "${persist}"
+  rm -rf "${APP}/hm-user/${user}"
+  ln -snf "${persist}/.nixcfg" "${APP}/hm-user/${user}"
+
+  exec setpriv --reuid="${uid}" --regid="${gid}" --init-groups \
+    env HOME="/home/${user}" USER="${user}" PATH="${PATH}" KELLINGRAD_USER="${user}" \
+    KELLINGRAD_APP="${APP}" KELLINGRAD_DEFAULTS="${DEFAULTS}" KELLINGRAD_DATA="${DATA}" \
+    "$0" "${original_args[@]}"
+fi
+
+persist="${DATA}/homes/${user}"
+nixcfg="${persist}/.nixcfg"
+factory="${DEFAULTS}/hm-user/${user}"
+
+if [[ ! -d "${factory}" ]]; then
+  factory="${DEFAULTS}/skel/.nixcfg"
+fi
+if [[ ! -d "${factory}" ]]; then
+  echo "${command_name}: no default Home Manager config found for ${user}" >&2
+  exit 1
+fi
+
+mkdir -p "${persist}"
+chmod 0700 "${persist}"
+tmp="$(mktemp -d "${persist}/.nixcfg-reset.XXXXXX")"
+cleanup() {
+  rm -rf "${tmp}"
+}
+trap cleanup EXIT
+
+cp -R "${factory}/." "${tmp}/"
+chmod -R u+rwX "${tmp}"
+rm -rf "${nixcfg}"
+mv "${tmp}" "${nixcfg}"
+trap - EXIT
+
+echo "Reset ${nixcfg} from ${factory}"
+
+if [[ "${refresh}" = "1" ]]; then
+  "${APP}/bin/refresh-system"
+else
+  echo "Skipped refresh; run refresh-system to activate the reset config."
+fi

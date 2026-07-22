@@ -1,0 +1,39 @@
+diff --git a/include/pathnames.h b/include/pathnames.h
+index b320a20..9e0149e 100644
+--- a/include/pathnames.h
++++ b/include/pathnames.h
+@@ -57,10 +57,10 @@
+ #define _PATH_TERMCOLORS_DIR	"/etc/" _PATH_TERMCOLORS_DIRNAME
+ 
+ /* login paths */
+-#define _PATH_PASSWD		"/etc/passwd"
+-#define _PATH_GSHADOW		"/etc/gshadow"
+-#define _PATH_GROUP		"/etc/group"
+-#define _PATH_SHADOW_PASSWD	"/etc/shadow"
++#define _PATH_PASSWD		"/data/etc/passwd"
++#define _PATH_GSHADOW		"/data/etc/gshadow"
++#define _PATH_GROUP		"/data/etc/group"
++#define _PATH_SHADOW_PASSWD	"/data/etc/shadow"
+ #define _PATH_SHELLS		"/etc/shells"
+ #define _PATH_PASSWDBAK_SUFFIX  "-"
+ 
+@@ -75,7 +75,7 @@
+ #define _PATH_OS_RELEASE_ETC	"/etc/os-release"
+ #define _PATH_OS_RELEASE_USR	"/usr/lib/os-release"
+ #define _PATH_NUMLOCK_ON	_PATH_RUNSTATEDIR "/numlock-on"
+-#define _PATH_LOGINDEFS		"/etc/login.defs"
++#define _PATH_LOGINDEFS		"/data/etc/login.defs"
+ 
+ #define _PATH_SD_UNITSLOAD	_PATH_RUNSTATEDIR "/systemd/systemd-units-load"
+ 
+@@ -96,8 +96,8 @@
+ #define _PATH_PROC_CDROMINFO	"/proc/sys/cdrom/info"
+ 
+ /* unshare paths */
+-#define _PATH_SUBUID		"/etc/subuid"
+-#define _PATH_SUBGID		"/etc/subgid"
++#define _PATH_SUBUID		"/data/etc/subuid"
++#define _PATH_SUBGID		"/data/etc/subgid"
+ #define _PATH_PROC_UIDMAP	"/proc/self/uid_map"
+ #define _PATH_PROC_GIDMAP	"/proc/self/gid_map"
+ #define _PATH_PROC_SETGROUPS	"/proc/self/setgroups"

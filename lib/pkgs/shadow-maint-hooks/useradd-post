@@ -1,0 +1,9 @@
+#!@runtimeShell@
+# shellcheck shell=sh
+set -eu
+
+: "${SUBJECT:?useradd did not provide SUBJECT}"
+if test ! -d "/home/${SUBJECT}"; then
+  exit 0
+fi
+exec @provisionUserHome@ "${SUBJECT}"

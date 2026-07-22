@@ -1,0 +1,38 @@
+{
+  "pins": {
+    "home-manager": {
+      "type": "Git",
+      "repository": {
+        "type": "GitHub",
+        "owner": "nix-community",
+        "repo": "home-manager"
+      },
+      "branch": "master",
+      "submodules": false,
+      "revision": "df39142474950e42d5fc3bf2fef9d6c62abbe8d7",
+      "url": "https://github.com/nix-community/home-manager/archive/df39142474950e42d5fc3bf2fef9d6c62abbe8d7.tar.gz",
+      "hash": "sha256-01bTMR9ZPG+uxPaZBeOwagg5uxIaFYs2/3YIrOX+bCA="
+    },
+    "nix-supervise": {
+      "type": "Git",
+      "repository": {
+        "type": "GitHub",
+        "owner": "ToxicPine",
+        "repo": "nix-supervise"
+      },
+      "branch": "main",
+      "submodules": false,
+      "revision": "0d8eb4c6be51682ba8e1ef629a0f1fd39144f1af",
+      "url": "https://github.com/ToxicPine/nix-supervise/archive/0d8eb4c6be51682ba8e1ef629a0f1fd39144f1af.tar.gz",
+      "hash": "sha256-Fyu99CUerlWFBAPskrn8kdvvLDuf+sISjImbK68L+88="
+    },
+    "nixpkgs": {
+      "type": "Channel",
+      "name": "nixos-unstable",
+      "artifact": "nixexprs.tar.xz",
+      "url": "https://releases.nixos.org/nixos/unstable/nixos-26.11pre1011622.a799d3e3886d/nixexprs.tar.xz",
+      "hash": "sha256-G5B1h4sOH4DN/RZ85xYi6zPm2MHdOrNMeUmMslZ28Qs="
+    }
+  },
+  "version": 8
+}

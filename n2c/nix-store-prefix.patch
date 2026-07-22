@@ -1,0 +1,178 @@
+Subject: [PATCH] Add a configurable Nix store prefix
+
+diff --git a/default.nix b/default.nix
+--- a/default.nix
++++ b/default.nix
+@@ -4,6 +4,16 @@ let
+   debug = false;
+   l = pkgs.lib // builtins;
+ 
++  validateNixStorePrefix = nixStorePrefix:
++    let
++      segments = l.tail (l.splitString "/" nixStorePrefix);
++      hasInvalidSegment = l.any (segment: builtins.elem segment [ "" "." ".." ]) segments;
++    in
++    l.throwIf
++      (builtins.match "/[A-Za-z0-9._+/-]+" nixStorePrefix == null || hasInvalidSegment)
++      "nixStorePrefix must be a normalized absolute container path"
++      nixStorePrefix;
++
+   nix2container-bin = pkgs.buildGoModule {
+     pname = "nix2container";
+     version = "1.0.0";
+@@ -233,11 +243,16 @@ let
+     # store path "popularity" as described in
+     # https://grahamc.com/blog/nix-and-layered-docker-images
+     maxLayers ? 1,
++    # The path prefix under which Nix store paths are placed in the
++    # image. This only changes their location in the image; their
++    # embedded store identities remain /nix/store paths.
++    nixStorePrefix ? "/nix",
+     # Deprecated: will be removed on v1
+     contents ? null,
+     # Author, comment, created_by
+     metadata ? { created_by = "nix2container"; },
+   }: let
++    validatedNixStorePrefix = validateNixStorePrefix nixStorePrefix;
+     subcommand = if reproducible
+       then "layers-from-reproducible-storepaths"
+       else "layers-from-non-reproducible-storepaths";
+@@ -246,13 +261,26 @@ let
+ 
+     # This is to move all storepaths in the copyToRoot attribute to the
+     # image root.
+-    rewrites = map (p: {
++    copyToRootRewrites = map (p: {
+ 	    path = p;
+ 	    regex = "^${p}";
+ 	    repl = "";
+     }) copyToRootList;
+ 
+-    rewritesFile = pkgs.writeText "rewrites.json" (l.toJSON rewrites);
++    allDeps = deps ++ copyToRootList;
++    closureGraphJSON = closureGraph allDeps ignore;
++    copyToRootRewritesFile = pkgs.writeText "copy-to-root-rewrites.json" (l.toJSON copyToRootRewrites);
++    rewritesFile =
++      if validatedNixStorePrefix == "/nix" then
++        copyToRootRewritesFile
++      else
++        pkgs.runCommand "rewrites.json" { nativeBuildInputs = [ pkgs.jq ]; } ''
++          jq \
++            --arg nixStorePrefix ${l.escapeShellArg validatedNixStorePrefix} \
++            --slurpfile copyToRootRewrites ${copyToRootRewritesFile} \
++            '[.[] | { path: .path, regex: "^/nix/", repl: ($nixStorePrefix + "/") }] + $copyToRootRewrites[0]' \
++            ${closureGraphJSON} > "$out"
++        '';
+     rewritesFlag = "--rewrites ${rewritesFile}";
+ 
+     permsFile = pkgs.writeText "perms.json" (l.toJSON perms);
+@@ -261,7 +289,6 @@ let
+     historyFile = pkgs.writeText "history.json" (l.toJSON metadata);
+     historyFlag = l.optionalString (metadata != {}) "--history ${historyFile}";
+ 
+-    allDeps = deps ++ copyToRootList;
+     tarDirectory = l.optionalString (!reproducible) "--tar-directory $out";
+ 
+     layersJSON = pkgs.runCommandLocal "layers.json" {} ''
+@@ -269,7 +296,7 @@ let
+       set -x
+       ${nix2container-bin}/bin/nix2container ${subcommand} \
+         $out/layers.json \
+-        ${closureGraph allDeps ignore} \
++        ${closureGraphJSON} \
+         --max-layers ${toString maxLayers} \
+         ${rewritesFlag} \
+         ${permsFlag} \
+@@ -284,7 +311,7 @@ let
+ 
+   # Create a nix database from all paths contained in the given closureGraphJson.
+   # Also makes all these paths store roots to prevent them from being garbage collected.
+-  makeNixDatabase = closureGraphJson:
++  makeNixDatabase = nixStorePrefix: closureGraphJson:
+     assert l.isDerivation closureGraphJson;
+     pkgs.runCommand "nix-database" {
+       nativeBuildInputs = with pkgs; [ jq nix sqlite ];
+@@ -302,13 +329,15 @@ let
+ 
+       # Dump and reimport to ensure that the update order doesn't somehow change the DB.
+       sqlite3 $PWD/nix/var/nix/db/db.sqlite '.dump' > db.dump
+-      mkdir -p $out/nix/var/nix/db/
+-      sqlite3 $out/nix/var/nix/db/db.sqlite '.read db.dump'
++      mkdir -p "$out${nixStorePrefix}/var/nix/db/"
++      sqlite3 "$out${nixStorePrefix}/var/nix/db/db.sqlite" '.read db.dump'
+ 
+-      mkdir -p $out/nix/var/nix/gcroots/docker/
+-      ln -s $(jq -r '.[].path' ${closureGraphJson}) $out/nix/var/nix/gcroots/docker/
++      mkdir -p "$out${nixStorePrefix}/var/nix/gcroots/docker/"
++      jq -r '.[].path' ${closureGraphJson} | while IFS= read -r store_path; do
++        ln -s "$store_path" "$out${nixStorePrefix}/var/nix/gcroots/docker/"
++      done
+ 
+-      mkdir -p $out/nix/store/.links/
++      mkdir -p "$out${nixStorePrefix}/store/.links/"
+     '';
+ 
+   # Write the references of `path' to a file but do not include `ignore' itself if non-null.
+@@ -361,6 +390,9 @@ let
+     # Note this is applied on the image layers and not on layers added
+     # with the buildImage.layers attribute
+     maxLayers ? 1,
++    # The path prefix under which Nix store paths and, when requested,
++    # the initialized Nix database are placed in the image.
++    nixStorePrefix ? "/nix",
+     # If set to true, the Nix database is initialized with all store
+     # paths added into the image. Note this is only useful to run nix
+     # commands from the image, for instance to build an image used by
+@@ -377,6 +409,7 @@ let
+     meta ? {},
+   }:
+     let
++      validatedNixStorePrefix = validateNixStorePrefix nixStorePrefix;
+       configFile = pkgs.writeText "config.json" (l.toJSON config);
+       copyToRootList = l.toList (l.defaultTo [] (l.defaultTo contents copyToRoot));
+ 
+@@ -386,7 +419,7 @@ let
+       nixDatabase = let
+         ignore = [configFile]++allLayers;
+         closureGraphForAllLayers = closureGraph ([configFile] ++ copyToRootList ++ allLayers) ignore;
+-      in makeNixDatabase closureGraphForAllLayers;
++      in makeNixDatabase validatedNixStorePrefix closureGraphForAllLayers;
+ 
+       perms' = perms ++ l.optional initializeNixDatabase
+         {
+@@ -399,6 +432,7 @@ let
+ 
+       customizationLayer = buildLayer {
+         inherit maxLayers;
++        nixStorePrefix = validatedNixStorePrefix;
+         perms = perms';
+         copyToRoot = copyToRootList ++ l.optional initializeNixDatabase nixDatabase;
+         deps = [configFile];
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -97,6 +97,12 @@ Function arguments are:
+     this is applied on the image layers and not on layers added with
+     the `buildImage.layers` attribute.
+ 
++- **`nixStorePrefix`** (defaults to `/nix`): the path prefix under which Nix
++    store paths are placed in the image. This changes only their image
++    locations, not the embedded `/nix/store/...` identities. When
++    `initializeNixDatabase` is enabled, the database is placed under the
++    same prefix.
++
+ - **`perms`** (defaults to `[]`): a list of file permisssions which are
+     set when the tar layer is created: these permissions are not
+     written to the Nix store.
+@@ -245,6 +251,11 @@ Function arguments are:
+     this is applied on the image layers and not on layers added with
+     the `buildLayer.layers` attribute.
+ 
++- **`nixStorePrefix`** (defaults to `/nix`): the path prefix under which Nix
++    store paths are placed in the layer. This changes only their image
++    locations, not the embedded `/nix/store/...` identities. Layers that
++    use the same prefix retain normal parent-layer de-duplication.
++
+ - **`perms`** (defaults to `[]`): a list of file permisssions which are
+     set when the tar layer is created: these permissions are not
+     written to the Nix store.
