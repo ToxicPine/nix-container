@@ -105,13 +105,14 @@ let
   nixBuildUserCount = 10;
   staticBootstrapBusybox = pkgs.pkgsStatic.busybox;
   staticBootstrapCoreutils = pkgs.pkgsStatic.coreutils;
-  # Both lower-store contracts live at fixed paths under /host: a read-only
-  # host store rooted there, or a Nix daemon socket at /host/socket.
+  # Both lower-store contracts live at fixed paths under /lower-store: a
+  # read-only host store rooted there, or a Nix daemon socket at
+  # /lower-store/socket.
   localOverlayStoreUrl =
     if imageConfig.localOverlayStore == "socket" then
-      "local-overlay://?lower-store=unix%3A%2F%2F%2Fhost%2Fsocket&check-mount=false"
+      "local-overlay://?lower-store=unix%3A%2F%2F%2Flower-store%2Fsocket&check-mount=false"
     else if imageConfig.localOverlayStore == "filesystem" then
-      "local-overlay://?lower-store=%2Fhost%2F%3Fread-only%3Dtrue&check-mount=false"
+      "local-overlay://?lower-store=%2Flower-store%2F%3Fread-only%3Dtrue&check-mount=false"
     else
       null;
   baseNixExperimentalFeatures = [

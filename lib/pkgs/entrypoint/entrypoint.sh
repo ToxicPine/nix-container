@@ -45,18 +45,18 @@ seed_nix_store() {
 
 validate_local_overlay_store_mounts() {
   if test "${LOCAL_OVERLAY_STORE}" = socket; then
-    lower_store_socket="/host/socket"
+    lower_store_socket="/lower-store/socket"
 
     if ! test -S "${lower_store_socket}"; then
       echo "entrypoint: local overlay store requires a lower-store daemon socket at ${lower_store_socket}" >&2
       exit 1
     fi
   else
-    lower_store_path="/host/nix/store"
-    lower_store_db="/host/nix/var/nix/db/db.sqlite"
+    lower_store_path="/lower-store/nix/store"
+    lower_store_db="/lower-store/nix/var/nix/db/db.sqlite"
 
     if ! test -d "${lower_store_path}" || ! test -f "${lower_store_db}"; then
-      echo "entrypoint: local overlay store requires the host's /nix mounted read-only below /host" >&2
+      echo "entrypoint: local overlay store requires the host's /nix mounted read-only below /lower-store" >&2
       exit 1
     fi
 
@@ -78,7 +78,7 @@ validate_local_overlay_store_mounts() {
     case ",${lower_mount_options}," in
       *,ro,*) ;;
       *)
-        echo "entrypoint: the mount providing /host/nix must be read-only" >&2
+        echo "entrypoint: the mount providing /lower-store/nix must be read-only" >&2
         exit 1
         ;;
     esac

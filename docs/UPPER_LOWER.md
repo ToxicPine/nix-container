@@ -63,14 +63,14 @@ import ../lib/image.nix {
 }
 ```
 
-| `localOverlayStore` | Fixed contract at `/host` |
+| `localOverlayStore` | Fixed contract at `/lower-store` |
 | --- | --- |
-| `"filesystem"` | The host's `/nix` mounted read-only at `/host/nix` |
-| `"socket"` | A Nix daemon socket at `/host/socket` |
+| `"filesystem"` | The host's `/nix` mounted read-only at `/lower-store/nix` |
+| `"socket"` | A Nix daemon socket at `/lower-store/socket` |
 
 Both modes require a host-created OverlayFS mount at `/nix/store`, a private
 upper directory, and a private `/nix` volume. At boot, the entrypoint validates
-the overlay and the selected `/host` contract. Omit the setting to use an
+the overlay and the selected `/lower-store` contract. Omit the setting to use an
 ordinary private store.
 
 ## Prepare an instance on the host
@@ -97,7 +97,7 @@ This command runs on the host before the container starts.
 docker run --detach \
   --name alpha \
   --mount type=bind,source=/var/lib/nix-container/alpha/merged,target=/nix/store \
-  --mount type=bind,source=/nix,target=/host/nix,readonly \
+  --mount type=bind,source=/nix,target=/lower-store/nix,readonly \
   --volume alpha-data:/data \
   --volume alpha-nix:/nix \
   system-image:latest
@@ -131,11 +131,11 @@ sudo mount -t overlay overlay \
   /var/lib/nix-container/alpha/merged
 ```
 
-Run the container as above, replacing the `/host/nix` mount with the socket's
-parent directory:
+Run the container as above, replacing the `/lower-store/nix` mount with the
+socket's parent directory:
 
 ```sh
---mount type=bind,source=/run/snix,target=/host,readonly
+--mount type=bind,source=/run/snix,target=/lower-store,readonly
 ```
 
 Mounting the directory lets a restarted daemon replace its socket. The daemon
