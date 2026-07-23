@@ -5,6 +5,7 @@ DATA_DIR="/data"
 ACCOUNT_DATA_DIR="${DATA_DIR}/etc"
 BUSYBOX="/opt/bootstrap/bin/busybox"
 BOOTSTRAP_CP="/opt/bootstrap/bin/cp"
+NIX_STORE_BOOTSTRAP_DIFF="/opt/bootstrap/bin/nix-store-bootstrap-diff"
 LOCAL_OVERLAY_STORE=@localOverlayStore@
 
 # /nix may be an empty volume, so invoke the static BusyBox multicall binary
@@ -38,9 +39,31 @@ seed_store_path() {
 
 seed_nix_store() {
   "${BUSYBOX}" mkdir -p /nix/store /nix/var/nix
-  for source_store_path in /nix-base/store/*; do
-    seed_store_path "${source_store_path}"
-  done
+
+  if test -z "${LOCAL_OVERLAY_STORE}"; then
+    for source_store_path in /nix-base/store/*; do
+      seed_store_path "${source_store_path}"
+    done
+    return
+  fi
+
+  if test "${LOCAL_OVERLAY_STORE}" = filesystem; then
+    lower_store_metadata="/lower-store/nix/var/nix/db/db.sqlite"
+  else
+    lower_store_metadata="/lower-store/socket"
+  fi
+
+  bootstrap_diff_path="/run/nix-store-bootstrap-diff"
+  "${NIX_STORE_BOOTSTRAP_DIFF}" \
+    "${LOCAL_OVERLAY_STORE}" \
+    /nix-base/var/nix/store-paths \
+    /nix/var/nix/db/db.sqlite \
+    "${lower_store_metadata}" >"${bootstrap_diff_path}"
+
+  while IFS= read -r store_path; do
+    seed_store_path "/nix-base${store_path#/nix}"
+  done <"${bootstrap_diff_path}"
+  "${BUSYBOX}" rm -f "${bootstrap_diff_path}"
 }
 
 validate_local_overlay_store_mounts() {
