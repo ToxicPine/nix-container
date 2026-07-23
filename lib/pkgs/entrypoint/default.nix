@@ -1,6 +1,5 @@
 {
-  lib,
-  localOverlayStoreEnabled,
+  localOverlayStore,
   writeTextFile,
 }:
 
@@ -11,10 +10,10 @@ writeTextFile {
   text =
     builtins.replaceStrings
       [
-        "@localOverlayStoreEnabled@"
+        "@localOverlayStore@"
       ]
       [
-        (lib.boolToString localOverlayStoreEnabled)
+        (if localOverlayStore == null then "" else localOverlayStore)
       ]
       (builtins.readFile ./entrypoint.sh);
 }
