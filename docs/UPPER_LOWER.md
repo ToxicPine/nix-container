@@ -54,27 +54,24 @@ container enter only its private upper store.
 
 ## Enable the overlay store
 
-The feature is disabled when the setting is omitted. To enable it, add the
-setting directly to the `image.nix` call in `nix/default.nix`:
+Set `localOverlayStore` in the `image.nix` call in `nix/default.nix`:
 
 ```nix
 import ../lib/image.nix {
   # Existing image arguments...
-  localOverlayStore.enable = true;
+  localOverlayStore = "filesystem";
 }
 ```
 
-The container then expects:
+| `localOverlayStore` | Fixed contract at `/host` |
+| --- | --- |
+| `"filesystem"` | The host's `/nix` mounted read-only at `/host/nix` |
+| `"socket"` | A Nix daemon socket at `/host/socket` |
 
-- a host-created OverlayFS mount at `/nix/store`;
-- the host's `/nix` mounted read-only at `/host/nix`, providing lower-store
-  metadata;
-- a private `/nix` volume for its database and profiles;
-- a private OverlayFS upper directory paired with that volume.
-
-At boot, the entrypoint verifies that `/nix/store` is OverlayFS and that the
-mount providing `/host/nix` is read-only. With the option disabled, `/nix`
-works as an ordinary private store and neither host mount is required.
+Both modes require a host-created OverlayFS mount at `/nix/store`, a private
+upper directory, and a private `/nix` volume. At boot, the entrypoint validates
+the overlay and the selected `/host` contract. Omit the setting to use an
+ordinary private store.
 
 ## Prepare an instance on the host
 
@@ -108,6 +105,41 @@ docker run --detach \
 
 For another instance, reuse `lowerdir=/nix/store` but create new upper, work,
 and merged directories and new `/data` and `/nix` volumes.
+
+## Use a socket lower store
+
+With `localOverlayStore = "socket"`, lower-store metadata comes from a Nix
+daemon socket while OverlayFS supplies the files. For example, with
+[Snix](https://snix.dev/docs/guides/local-overlay/):
+
+```sh
+snix store daemon &
+snix store mount --list-root /var/lib/snix/store &
+snix nix-daemon -l /run/snix/socket --unix-listen-unlink &
+```
+
+`--list-root` makes lower paths visible in directory listings of the merged
+store. The image closure is separate at `/nix-base/store`; at boot the
+entrypoint copies missing image paths from there into `/nix/store` and loads
+their registration.
+
+Create each instance's overlay with the mounted store as the lower directory:
+
+```sh
+sudo mount -t overlay overlay \
+  -o lowerdir=/var/lib/snix/store,upperdir=/var/lib/nix-container/alpha/upper,workdir=/var/lib/nix-container/alpha/work \
+  /var/lib/nix-container/alpha/merged
+```
+
+Run the container as above, replacing the `/host/nix` mount with the socket's
+parent directory:
+
+```sh
+--mount type=bind,source=/run/snix,target=/host,readonly
+```
+
+Mounting the directory lets a restarted daemon replace its socket. The daemon
+and mounted files must describe the same immutable lower store.
 
 ## Lifecycle constraints
 

@@ -1,6 +1,6 @@
 {
   declaredUsers,
-  localOverlayStore ? { },
+  localOverlayStore ? null,
   n2c,
   nixSupervisionPackages,
   pkgs,
@@ -49,19 +49,17 @@ let
     };
   };
 
-  localOverlayStoreType = types.submodule {
-    options.enable = mkOption {
-      type = types.bool;
-      default = false;
-    };
-  };
-
   schemaModule = {
     options = {
       declaredUsers = mkOption { type = types.attrsOf userType; };
       localOverlayStore = mkOption {
-        type = localOverlayStoreType;
-        default = { };
+        type = types.nullOr (
+          types.enum [
+            "filesystem"
+            "socket"
+          ]
+        );
+        default = null;
       };
       runtime = mkOption {
         type = runtimeType;
@@ -107,19 +105,33 @@ let
   nixBuildUserCount = 10;
   staticBootstrapBusybox = pkgs.pkgsStatic.busybox;
   staticBootstrapCoreutils = pkgs.pkgsStatic.coreutils;
-  localOverlayStoreEnabled = imageConfig.localOverlayStore.enable;
-  localOverlayStoreUrl = "local-overlay://?lower-store=%2Fhost%2F%3Fread-only%3Dtrue&check-mount=false";
-  nixExperimentalFeatures = [
+  # Both lower-store contracts live at fixed paths under /host: a read-only
+  # host store rooted there, or a Nix daemon socket at /host/socket.
+  localOverlayStoreUrl =
+    if imageConfig.localOverlayStore == "socket" then
+      "local-overlay://?lower-store=unix%3A%2F%2F%2Fhost%2Fsocket&check-mount=false"
+    else if imageConfig.localOverlayStore == "filesystem" then
+      "local-overlay://?lower-store=%2Fhost%2F%3Fread-only%3Dtrue&check-mount=false"
+    else
+      null;
+  baseNixExperimentalFeatures = [
     "nix-command"
     "flakes"
-  ]
-  ++ lib.optionals localOverlayStoreEnabled [
-    "local-overlay-store"
-    "read-only-local-store"
   ];
+  localOverlayStoreNixExperimentalFeatures =
+    if imageConfig.localOverlayStore == "socket" then
+      [ "local-overlay-store" ]
+    else if imageConfig.localOverlayStore == "filesystem" then
+      [
+        "local-overlay-store"
+        "read-only-local-store"
+      ]
+    else
+      [ ];
+  nixExperimentalFeatures = baseNixExperimentalFeatures ++ localOverlayStoreNixExperimentalFeatures;
 
   entrypoint = imagePkgs.callPackage ./pkgs/entrypoint {
-    inherit localOverlayStoreEnabled;
+    inherit (imageConfig) localOverlayStore;
   };
 
   users = lib.mapAttrsToList (name: user: {
@@ -516,7 +528,9 @@ in
       "NIX_PAGER=cat"
       "HOME=/root"
     ]
-    ++ lib.optional localOverlayStoreEnabled "SYSTEM_IMAGE_NIX_DAEMON_STORE=${localOverlayStoreUrl}";
+    ++ lib.optional (
+      localOverlayStoreUrl != null
+    ) "SYSTEM_IMAGE_NIX_DAEMON_STORE=${localOverlayStoreUrl}";
     ExposedPorts = lib.listToAttrs (
       map (port: lib.nameValuePair "${toString port}/tcp" { }) imageConfig.system.exposedPorts
     );
