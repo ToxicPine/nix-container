@@ -105,6 +105,7 @@ let
   nixBuildUserCount = 10;
   staticBootstrapBusybox = pkgs.pkgsStatic.busybox;
   staticBootstrapCoreutils = pkgs.pkgsStatic.coreutils;
+  staticNixStoreBootstrapDiff = imagePkgs.pkgsStatic.nix-store-bootstrap-diff;
   # Both lower-store contracts live at fixed paths under /lower-store: a
   # read-only host store rooted there, or a Nix daemon socket at
   # /lower-store/socket.
@@ -429,8 +430,9 @@ let
     mkdir -p "$out/opt/bootstrap/bin"
     cp ${staticBootstrapBusybox}/bin/busybox "$out/opt/bootstrap/bin/busybox"
     cp ${staticBootstrapCoreutils}/bin/cp "$out/opt/bootstrap/bin/cp"
-    chmod 0755 "$out/opt/bootstrap/bin/busybox"
-    chmod 0755 "$out/opt/bootstrap/bin/cp"
+    cp ${staticNixStoreBootstrapDiff}/bin/nix-store-bootstrap-diff \
+      "$out/opt/bootstrap/bin/nix-store-bootstrap-diff"
+    chmod 0755 "$out/opt/bootstrap/bin/"*
 
     mkdir -p "$out/etc/nixcfg" "$out/etc/nix" "$out/etc/s6-linux-init" "$out/run"
     (
@@ -473,6 +475,7 @@ let
     sed -i -E '/^[[:space:]]*MAIL_(CHECK_ENAB|DIR|FILE)[[:space:]]/d' "$out/etc/login.defs"
     mkdir -p "$out/nix-base/var/nix" "$out/usr/bin"
     cp ${runtimeClosureInfo}/registration "$out/nix-base/var/nix/db-base"
+    cp ${runtimeClosureInfo}/store-paths "$out/nix-base/var/nix/store-paths"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
     ${linkStaticCommands}
 

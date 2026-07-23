@@ -73,6 +73,12 @@ upper directory, and a private `/nix` volume. At boot, the entrypoint validates
 the overlay and the selected `/lower-store` contract. Omit the setting to use an
 ordinary private store.
 
+The entrypoint computes the Nix store bootstrap diff by comparing the image's
+store-path manifest with the private Nix database first, then batch-querying the
+selected lower metadata source for only the remaining paths. Those metadata
+sources are authoritative; boot does not probe or enumerate the lower store
+filesystem.
+
 ## Prepare an instance on the host
 
 Each instance needs distinct upper, work, and merged directories. Its upper and
@@ -114,14 +120,14 @@ daemon socket while OverlayFS supplies the files. For example, with
 
 ```sh
 snix store daemon &
-snix store mount --list-root /var/lib/snix/store &
+snix store mount /var/lib/snix/store &
 snix nix-daemon -l /run/snix/socket --unix-listen-unlink &
 ```
 
-`--list-root` makes lower paths visible in directory listings of the merged
-store. The image closure is separate at `/nix-base/store`; at boot the
-entrypoint copies missing image paths from there into `/nix/store` and loads
-their registration.
+The image closure is separate at `/nix-base/store`. At boot the entrypoint
+queries the daemon once for the image paths not already represented by the
+private store, copies the missing paths into `/nix/store`, and loads their
+registration. It does not list the lower store, so `--list-root` is unnecessary.
 
 Create each instance's overlay with the mounted store as the lower directory:
 
