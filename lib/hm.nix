@@ -63,14 +63,20 @@ let
 
   homeConfig = lib.mapAttrs (name: _: mkHome name) declaredHmUsers;
 
-  profileStoreSeeds =
+  factoryGenerations =
     if policy.buildProfiles then lib.mapAttrs (_: hc: hc.activationPackage) homeConfig else { };
+
+  factoryGenerationLinks = pkgs.linkFarm "home-manager-factory-generations" (
+    lib.mapAttrsToList (name: path: { inherit name path; }) factoryGenerations
+  );
 in
 
 {
   runtime = {
-    contents = lib.attrValues profileStoreSeeds;
-    trees = { };
+    contents = lib.attrValues factoryGenerations;
+    trees = lib.optionalAttrs policy.buildProfiles {
+      "/opt/defaults/home-manager-generations" = factoryGenerationLinks;
+    };
 
     files = {
       "/etc/home-manager-policy.json" = pkgs.writeText "home-manager-policy.json" (

@@ -43,7 +43,7 @@ activate_home_manager_user() {
   local rebuild_on_boot activate_on_boot
   local user_name="$1"
   local user_home_dir home_manager_profiles_dir home_manager_profile
-  local home_manager_gc_roots_dir
+  local factory_home_manager_generation home_manager_gc_roots_dir
 
   [[ -f "/opt/app/hm-user/${user_name}/home.nix" ]] || return 0
 
@@ -53,6 +53,7 @@ activate_home_manager_user() {
   home_manager_profiles_dir="${user_home_dir}/.local/state/nix/profiles"
   home_manager_profile="${home_manager_profiles_dir}/home-manager"
   home_manager_gc_roots_dir="${user_home_dir}/.local/state/home-manager/gcroots"
+  factory_home_manager_generation="/opt/defaults/home-manager-generations/${user_name}"
 
   run_as_user "${user_name}" mkdir -p "${home_manager_profiles_dir}" "${home_manager_gc_roots_dir}"
 
@@ -66,6 +67,11 @@ activate_home_manager_user() {
       run_as_user_or_warn \
         "Warning: Home Manager activation failed for ${user_name}" \
         "${user_name}" "${home_manager_profile}/activate"
+    elif [[ -x "${factory_home_manager_generation}/activate" ]]; then
+      echo "Activating factory Home Manager generation for ${user_name}..." >&2
+      run_as_user_or_warn \
+        "Warning: factory Home Manager activation failed for ${user_name}" \
+        "${user_name}" "${factory_home_manager_generation}/activate"
     else
       echo "Building Home Manager for newly provisioned user ${user_name}..." >&2
       run_as_user_or_warn \
