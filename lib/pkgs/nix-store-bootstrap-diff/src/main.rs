@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use nix_daemon::{nix::DaemonStore, Progress, Store};
+use nix_daemon::{nix::DaemonStore, ClientSettings, Progress, Store};
 
 enum LowerStoreMode {
     Filesystem,
@@ -96,6 +96,16 @@ async fn query_valid_paths_from_daemon(
         .with_context(|| {
             format!(
                 "failed to connect to lower store at {}",
+                socket_path.display()
+            )
+        })?;
+    store
+        .set_options(ClientSettings::default())
+        .result()
+        .await
+        .with_context(|| {
+            format!(
+                "failed to initialize lower store connection at {}",
                 socket_path.display()
             )
         })?;
