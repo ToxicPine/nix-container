@@ -1,0 +1,83 @@
+{
+  "schema": "fast-vms-benchmark-v1",
+  "target": "vm",
+  "cache_condition": "cross-instance-warm",
+  "private_cache_eviction": true,
+  "expected": {
+    "bytes": 25,
+    "sha256": "edf03332c6ca9e23cc6b21849fd76e032c59634312e1c787290816f8e8a5fa00"
+  },
+  "residency_files": [
+    "/absolute/path/to/the/fixed/base-image-working-set"
+  ],
+  "platform": {
+    "launch": [],
+    "ready": [],
+    "stop": []
+  },
+  "resources": {
+    "target_cgroup": "/sys/fs/cgroup/fast-vms/target",
+    "client_cgroup": "/sys/fs/cgroup/fast-vms/client",
+    "target_cpus": "4-9",
+    "client_cpus": "3",
+    "housekeeping_cpus": "0-2"
+  },
+  "host_requirements": {
+    "kvm": true,
+    "swap_off": true,
+    "thp_off": true,
+    "ksm_off": true,
+    "cgroups": true,
+    "partition_roots": true,
+    "smt_off": true,
+    "homogeneous_target_cpus": true,
+    "fixed_frequency": true,
+    "housekeeping_isolation": true,
+    "direct_network": true
+  },
+  "hooks": {
+    "before_baseline": [],
+    "before_suite": [
+      [
+        "/absolute/path/to/warm-and-verify-cross-instance-cache"
+      ]
+    ],
+    "before_sample": [],
+    "after_suite": []
+  },
+  "instances": [
+    {
+      "id": "vm-01",
+      "ramp": 1,
+      "url": "http://192.0.2.11:8080/",
+      "network_interface": "tap-vm01",
+      "prepare": [
+        [
+          "/absolute/path/to/attach-prepared-network",
+          "tap-vm01"
+        ]
+      ],
+      "launch": [
+        "/absolute/path/to/run-vm",
+        "--tap",
+        "tap-vm01",
+        "--guest-ip",
+        "192.0.2.11/24",
+        "--mac",
+        "02:00:00:00:00:11",
+        "/absolute/path/to/instances/vm-01"
+      ],
+      "stop": [],
+      "cleanup": [
+        [
+          "/absolute/path/to/detach-prepared-network",
+          "tap-vm01"
+        ],
+        [
+          "/absolute/path/to/evict-private-cache",
+          "/absolute/path/to/instances/vm-01/disk.qcow2"
+        ]
+      ]
+    }
+  ]
+}

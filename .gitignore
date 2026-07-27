@@ -1,2 +1,12 @@
+# Nix build output symlinks.
 /result
 /result-*
+
+# Local benchmark and smoke-test output.
+/bench/results*/
+/bench/.smoke*/
+
+# Locally compiled benchmark helpers (Nix builds these in the store).
+/bench/density-load
+/bench/cgroup-exec
+/bench/monotonic-ns

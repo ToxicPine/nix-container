@@ -2,7 +2,7 @@
 {
   imageName = "system-image";
 
-  exposedPorts = [ ];
+  exposedPorts = [ 8080 ];
 
   packages = [
     pkgs.bzip2

@@ -108,11 +108,20 @@ validate_local_overlay_store_mounts() {
   fi
 
   merged_store_is_overlay=false
-  while IFS=' ' read -r _source mount_point filesystem_type _options _rest; do
-    if test "${mount_point}" = /nix/store && test "${filesystem_type}" = overlay; then
-      merged_store_is_overlay=true
-      break
+  while IFS=' ' read -r _source mount_point filesystem_type mount_options _rest; do
+    if test "${mount_point}" != /nix/store; then
+      continue
     fi
+
+    # gVisor presents a host bind mount as 9p. Its overlayfs_stale_read mount
+    # option records that the host source is OverlayFS.
+    case "${filesystem_type}:,${mount_options}," in
+      overlay:* | 9p:*,overlayfs_stale_read,*)
+        merged_store_is_overlay=true
+        break
+        ;;
+      *) ;;
+    esac
   done </proc/mounts
 
   if test "${merged_store_is_overlay}" != true; then

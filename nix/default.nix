@@ -24,7 +24,7 @@ let
   hmPolicy = {
     buildProfiles = true;
     activateOnBoot = true;
-    rebuildOnBoot = true;
+    rebuildOnBoot = false;
   };
 
   hm = import ../lib/hm.nix {
@@ -44,5 +44,6 @@ import ../lib/image.nix {
     pkgs
     ;
   inherit (hm) runtime;
+  localOverlayStore = "socket";
   system = systemConfig;
 }
