@@ -3,4 +3,20 @@
 set -eu
 
 : "${SUBJECT:?userdel did not provide SUBJECT}"
-exec @stopUserTrees@ "${SUBJECT}"
+
+# Stop the user's supervision tree and its activation oneshot through the
+# root tree's live database. The runtime name comes from the manifest, which
+# records each service's declared option path.
+manifest=/run/nix-supervise/system/current-service-manifest.json
+live=/run/nix-supervise/system/live
+if test ! -f "${manifest}" || test ! -L "${live}"; then
+  exit 0
+fi
+
+tree_service="$(@jq@ -r --arg path "tree-${SUBJECT}" \
+  '.services | to_entries[] | select(.value.optionPath == $path) | .key' "${manifest}")"
+if test -z "${tree_service}"; then
+  exit 0
+fi
+
+exec @s6rc@ -l "${live}" -d change "${tree_service}"

@@ -9,40 +9,17 @@ let
     config.allowUnfree = true;
     overlays = [ (import ../fs/overlay.nix) ];
   };
-  home-manager = import sources.home-manager { inherit pkgs; };
-  nixSupervisionPackages = pkgs.callPackages "${sources.nix-supervise}/pkgs" { };
   n2c = import ../n2c { inherit pkgs; };
-
-  systemConfig = import ./system.nix { inherit pkgs; };
-
-  declaredUsers = {
-    user = {
-      uid = 1000;
-    };
-  };
-
-  hmPolicy = {
-    buildProfiles = true;
-    activateOnBoot = true;
-    rebuildOnBoot = true;
-  };
-
-  hm = import ../lib/hm.nix {
-    inherit
-      declaredUsers
-      hmPolicy
-      home-manager
-      pkgs
-      ;
-  };
 in
 import ../lib/image.nix {
-  inherit
-    declaredUsers
-    n2c
-    nixSupervisionPackages
-    pkgs
-    ;
-  inherit (hm) runtime;
-  system = systemConfig;
+  inherit n2c pkgs sources;
+  image = import ./image.nix { inherit pkgs; };
+  # The root supervision tree, declared in fs/system/system.nix. This
+  # evaluation yields the image's factory generation and whatever factory
+  # defaults the configuration asks the image to carry; refresh-system
+  # re-evaluates the same file at runtime.
+  rootTree = import ../lib/fs/system-base {
+    inherit pkgs sources;
+    modules = [ ../fs/system/system.nix ];
+  };
 }

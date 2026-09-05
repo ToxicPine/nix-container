@@ -1,9 +1,10 @@
 {
   coreutils,
+  jq,
   provision-user-home,
   runCommand,
   runtimeShell,
-  stopUserTrees,
+  s6-rc,
 }:
 
 runCommand "shadow-maint-hooks" { } ''
@@ -20,7 +21,8 @@ runCommand "shadow-maint-hooks" { } ''
     --replace-fail '@rm@' '${coreutils}/bin/rm'
   substitute ${./userdel-pre} "$out/etc/shadow-maint/userdel-pre.d/50-kellingrad-services" \
     --replace-fail '@runtimeShell@' '${runtimeShell}' \
-    --replace-fail '@stopUserTrees@' '${stopUserTrees}/bin/system-image-stop-user-trees'
+    --replace-fail '@jq@' '${jq}/bin/jq' \
+    --replace-fail '@s6rc@' '${s6-rc}/bin/s6-rc'
 
   chmod 0755 "$out/etc/shadow-maint"/*/50-kellingrad-*
 ''

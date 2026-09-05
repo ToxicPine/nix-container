@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
 
-# Stop user-owned s6-rc states in dependency order while their supervision
-# trees are still available. s6-linux-init performs final tree teardown.
-exec s6-envdir -I /run/s6-linux-init-env system-image-stop-user-trees
+root_tree_service_dir=/run/service/nix-supervise-system
+touch "${root_tree_service_dir}/down"
+exec s6-svc -T 90000 -wd -d "${root_tree_service_dir}"

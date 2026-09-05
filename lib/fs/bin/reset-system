@@ -13,6 +13,7 @@ usage() {
 Usage: ${command_name} [--no-refresh]
 
 Reset the current user's ~/.nixcfg Home Manager config to factory defaults.
+As root, reset the system supervision config in /data/system/nixcfg instead.
 EOF
 }
 
@@ -33,10 +34,40 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 
-user="${KELLINGRAD_USER:-${USER:-}}"
-if [[ -z "${user}" ]] || { [[ "${user}" = "root" ]] && [[ -z "${KELLINGRAD_USER:-}" ]]; }; then
-  echo "${command_name}: set KELLINGRAD_USER when running as root" >&2
-  exit 1
+user="${KELLINGRAD_USER:-${USER:-$(id -un)}}"
+
+# Root resets the system configuration: the root supervision tree's
+# generation source, seeded from the factory copy.
+if [[ "${user}" = "root" ]]; then
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "${command_name}: the system configuration can only be reset as root" >&2
+    exit 1
+  fi
+
+  system_config_dir="${DATA}/system/nixcfg"
+  factory="${DEFAULTS}/system"
+  if [[ ! -d "${factory}" ]]; then
+    echo "${command_name}: no default system config found at ${factory}" >&2
+    exit 1
+  fi
+
+  mkdir -p "${DATA}/system"
+  tmp="$(mktemp -d "${DATA}/system/.nixcfg-reset.XXXXXX")"
+  trap 'rm -rf "${tmp}"' EXIT
+  cp -R "${factory}/." "${tmp}/"
+  chmod -R u+rwX "${tmp}"
+  rm -rf "${system_config_dir}"
+  mv "${tmp}" "${system_config_dir}"
+  trap - EXIT
+  rm -rf "${APP}/system"
+  ln -snf "${system_config_dir}" "${APP}/system"
+
+  echo "Reset ${system_config_dir} from ${factory}"
+  if [[ "${refresh}" = "1" ]]; then
+    exec env KELLINGRAD_USER=root "${APP}/bin/refresh-system"
+  fi
+  echo "Skipped refresh; run refresh-system as root to apply the reset config."
+  exit 0
 fi
 
 uid="$(id -u -- "${user}" 2>/dev/null || true)"

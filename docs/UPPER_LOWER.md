@@ -37,14 +37,10 @@ lower store need not be downloaded or copied into each container's upper.
 
 If the host store contains the packages required by the Home Manager profiles,
 the image does not need to embed those profile closures. Disable profile builds
-in `nix/default.nix`:
+in `fs/system/system.nix`:
 
 ```nix
-hmPolicy = {
-  buildProfiles = false;
-  activateOnBoot = true;
-  rebuildOnBoot = true;
-};
+homeManager.buildProfiles = false;
 ```
 
 Profiles are then built when the container boots. Their generations remain

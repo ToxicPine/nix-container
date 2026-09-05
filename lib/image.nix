@@ -1,11 +1,10 @@
 {
-  declaredUsers,
+  image,
   localOverlayStore ? null,
   n2c,
-  nixSupervisionPackages,
   pkgs,
-  runtime ? { },
-  system,
+  rootTree,
+  sources,
 }:
 
 let
@@ -13,15 +12,9 @@ let
   imagePkgs = pkgs.extend overlay;
   inherit (pkgs) lib;
   inherit (lib) types mkOption;
+  nixSupervisionPackages = pkgs.callPackages "${sources.nix-supervise}/pkgs" { };
 
-  userType = types.submodule {
-    options = {
-      uid = mkOption { type = types.int; };
-    };
-    freeformType = types.attrsOf types.unspecified;
-  };
-
-  systemType = types.submodule {
+  imageType = types.submodule {
     options = {
       imageName = mkOption { type = types.str; };
       packages = mkOption { type = types.listOf types.package; };
@@ -32,26 +25,9 @@ let
     };
   };
 
-  runtimeType = types.submodule {
-    options = {
-      contents = mkOption {
-        type = types.listOf types.package;
-        default = [ ];
-      };
-      files = mkOption {
-        type = types.attrsOf types.path;
-        default = { };
-      };
-      trees = mkOption {
-        type = types.attrsOf types.path;
-        default = { };
-      };
-    };
-  };
-
   schemaModule = {
     options = {
-      declaredUsers = mkOption { type = types.attrsOf userType; };
+      image = mkOption { type = imageType; };
       localOverlayStore = mkOption {
         type = types.nullOr (
           types.enum [
@@ -61,11 +37,6 @@ let
         );
         default = null;
       };
-      runtime = mkOption {
-        type = runtimeType;
-        default = { };
-      };
-      system = mkOption { type = systemType; };
     };
   };
 
@@ -75,10 +46,8 @@ let
       {
         config = {
           inherit
-            declaredUsers
+            image
             localOverlayStore
-            runtime
-            system
             ;
         };
       }
@@ -97,15 +66,20 @@ let
     else
       throw "lib/image.nix: ${label} keys must be absolute paths: ${lib.concatStringsSep ", " relativePaths}";
 
-  validatedRuntimeFiles = assertAbsoluteKeys "runtime.files" imageConfig.runtime.files;
-  validatedRuntimeTrees = assertAbsoluteKeys "runtime.trees" imageConfig.runtime.trees;
+  # Build-time interface between the root tree configuration and the image:
+  # store paths to carry, and files and trees to install as factory defaults.
+  factoryDefaults = rootTree.config.factory;
+  validatedFactoryFiles = assertAbsoluteKeys "factory.files" factoryDefaults.files;
+  validatedFactoryTrees = assertAbsoluteKeys "factory.trees" factoryDefaults.trees;
 
   mutableConfigPrefix = "/opt/app";
   factorySettingsPrefix = "/opt/defaults";
   nixBuildUserCount = 10;
   staticBootstrapBusybox = pkgs.pkgsStatic.busybox;
   staticBootstrapCoreutils = pkgs.pkgsStatic.coreutils;
-  staticNixStoreBootstrapDiff = imagePkgs.pkgsStatic.nix-store-bootstrap-diff;
+  # Built from the unpatched package set: the account-data patches on
+  # util-linux would otherwise cascade into a from-source Rust toolchain.
+  staticNixStoreBootstrapDiff = pkgs.pkgsStatic.callPackage ./pkgs/nix-store-bootstrap-diff { };
   # Both lower-store contracts live at fixed paths under /lower-store: a
   # read-only host store rooted there, or a Nix daemon socket at
   # /lower-store/socket.
@@ -136,18 +110,17 @@ let
     inherit (imageConfig) localOverlayStore;
   };
 
-  users = lib.mapAttrsToList (name: user: {
-    inherit name;
-    inherit (user) uid;
-  }) imageConfig.declaredUsers;
-
   supervision = import ./pkgs/supervision {
     inherit nixSupervisionPackages pkgs;
   };
 
-  shadowMaintHooks = imagePkgs.callPackage ./pkgs/shadow-maint-hooks {
-    inherit (supervision) stopUserTrees;
-  };
+  shadowMaintHooks = imagePkgs.callPackage ./pkgs/shadow-maint-hooks { };
+
+  # The root tree's factory generation, applied on a fresh /nix volume before
+  # root has ever run refresh-system. Declared users, their seeding, and root
+  # services all come from it; the image's own account database holds only
+  # system accounts.
+  factorySystemGeneration = rootTree.config.supervision.system.generation;
 
   renderPasswdEntry =
     {
@@ -235,14 +208,6 @@ let
     }
   ) nixBuildUserCount;
 
-  configuredPasswdEntries = map (user: {
-    inherit (user) name uid;
-    gid = user.uid;
-    gecos = "";
-    home = "/home/${user.name}";
-    shell = "/bin/bash";
-  }) users;
-
   builtInPasswdEntries = [
     {
       name = "root";
@@ -271,11 +236,6 @@ let
   ]
   ++ nixBuildUsers;
 
-  configuredGroupEntries = map (user: {
-    inherit (user) name;
-    gid = user.uid;
-  }) users;
-
   builtInGroupEntries = [
     {
       name = "root";
@@ -296,34 +256,23 @@ let
     }
   ];
 
-  passwdFile = writeAccountFile "passwd" renderPasswdEntry (
-    builtInPasswdEntries ++ configuredPasswdEntries
-  );
+  passwdFile = writeAccountFile "passwd" renderPasswdEntry builtInPasswdEntries;
+  groupFile = writeAccountFile "group" renderGroupEntry builtInGroupEntries;
+  shadowFile = writeAccountFile "shadow" renderShadowEntry builtInPasswdEntries;
+  gshadowFile = writeAccountFile "gshadow" renderGshadowEntry builtInGroupEntries;
 
-  groupFile = writeAccountFile "group" renderGroupEntry (
-    builtInGroupEntries ++ configuredGroupEntries
-  );
-
-  shadowFile = writeAccountFile "shadow" renderShadowEntry (
-    builtInPasswdEntries ++ configuredPasswdEntries
-  );
-
-  gshadowFile = writeAccountFile "gshadow" renderGshadowEntry (
-    builtInGroupEntries ++ configuredGroupEntries
-  );
-
-  installRuntimeFiles = lib.concatStringsSep "\n" (
+  installFactoryFiles = lib.concatStringsSep "\n" (
     lib.mapAttrsToList (destination: source: ''
       mkdir -p "$out${builtins.dirOf destination}"
       cp ${source} "$out${destination}"
-    '') validatedRuntimeFiles
+    '') validatedFactoryFiles
   );
 
-  installRuntimeTrees = lib.concatStringsSep "\n" (
+  installFactoryTrees = lib.concatStringsSep "\n" (
     lib.mapAttrsToList (destination: source: ''
       mkdir -p "$out${destination}"
       cp -R ${source}/. "$out${destination}/"
-    '') validatedRuntimeTrees
+    '') validatedFactoryTrees
   );
 
   installTree =
@@ -351,9 +300,11 @@ let
   '') staticCommandNames;
 
   maximumImageLayerCount = 125;
+  supervisionLayerCount = 1;
   coreRuntimeLayerCount = 1;
   rootFilesystemLayerCount = 1;
-  homeManagerLayerBudget = maximumImageLayerCount - coreRuntimeLayerCount - rootFilesystemLayerCount;
+  factoryLayerBudget =
+    maximumImageLayerCount - supervisionLayerCount - coreRuntimeLayerCount - rootFilesystemLayerCount;
   nixStorePrefix = "/nix-base";
 
   # These packages are exposed as root-filesystem links after /nix is seeded.
@@ -361,6 +312,7 @@ let
   # the script itself uses only the static tools under /opt/bootstrap.
   rootFilesystemPackages = [
     entrypoint
+    factorySystemGeneration
     pkgs.bashInteractive
     pkgs.coreutils
     pkgs.dockerTools.binSh
@@ -369,41 +321,52 @@ let
     pkgs.jq
     pkgs.nix
     imagePkgs.nss-altfiles
-    imagePkgs.seed-user-hm
+    imagePkgs.provision-user-home
     imagePkgs.shadow
     imagePkgs.util-linuxMinimal
     shadowMaintHooks
   ]
   ++ supervision.packages
-  ++ imageConfig.system.packages;
+  ++ imageConfig.image.packages;
 
+  # The s6 stack and nix-supervise tools change only with their pins, so they
+  # get a layer of their own beneath the core runtime.
+  supervisionRoots = lib.unique supervision.packages;
   coreRuntimeRoots = lib.unique rootFilesystemPackages;
-  homeManagerRuntimeRoots = lib.unique imageConfig.runtime.contents;
-  runtimeStoreRoots = lib.unique (coreRuntimeRoots ++ homeManagerRuntimeRoots);
+  factoryRoots = lib.unique factoryDefaults.contents;
+  runtimeStoreRoots = lib.unique (supervisionRoots ++ coreRuntimeRoots ++ factoryRoots);
 
   # The registration retains the real /nix/store identities. The entrypoint
   # loads it only after copying the relocated files onto the mounted store.
   runtimeClosureInfo = pkgs.closureInfo { rootPaths = runtimeStoreRoots; };
 
+  supervisionLayer = n2c.buildLayer {
+    deps = supervisionRoots;
+    inherit nixStorePrefix;
+    maxLayers = supervisionLayerCount;
+    metadata.created_by = "n2c: system-image supervision";
+  };
+
   coreRuntimeLayer = n2c.buildLayer {
     deps = coreRuntimeRoots;
     inherit nixStorePrefix;
     maxLayers = coreRuntimeLayerCount;
+    layers = [ supervisionLayer ];
     metadata.created_by = "n2c: system-image core runtime";
   };
 
   # n2c keeps nested layers as distinct OCI layers. The nesting records their
   # order and lets the outer layer exclude store paths already in the core.
   runtimeStoreLayer =
-    if homeManagerRuntimeRoots == [ ] then
+    if factoryRoots == [ ] then
       coreRuntimeLayer
     else
       n2c.buildLayer {
-        deps = homeManagerRuntimeRoots;
+        deps = factoryRoots;
         inherit nixStorePrefix;
-        maxLayers = homeManagerLayerBudget;
+        maxLayers = factoryLayerBudget;
         layers = [ coreRuntimeLayer ];
-        metadata.created_by = "n2c: prebuilt Home Manager runtime";
+        metadata.created_by = "n2c: system-image factory defaults";
       };
 
   rootEnvironment = pkgs.buildEnv {
@@ -450,8 +413,10 @@ let
     : > "$out/etc/subgid"
     chmod 0644 "$out/etc/passwd" "$out/etc/group" "$out/etc/subuid" "$out/etc/subgid"
     chmod 0600 "$out/etc/shadow" "$out/etc/gshadow"
-    ${installRuntimeFiles}
-    ${installRuntimeTrees}
+    ${installFactoryFiles}
+    ${installFactoryTrees}
+    mkdir -p "$out${factorySettingsPrefix}/system-generation"
+    cp -R ${factorySystemGeneration}/. "$out${factorySettingsPrefix}/system-generation/"
     cat > "$out/etc/nsswitch.conf" <<'EOF'
     passwd: altfiles
     group: altfiles
@@ -508,7 +473,7 @@ let
 
 in
 (n2c.buildImage {
-  name = imageConfig.system.imageName;
+  name = imageConfig.image.imageName;
   tag = "latest";
   inherit nixStorePrefix;
 
@@ -536,7 +501,7 @@ in
       localOverlayStoreUrl != null
     ) "SYSTEM_IMAGE_NIX_DAEMON_STORE=${localOverlayStoreUrl}";
     ExposedPorts = lib.listToAttrs (
-      map (port: lib.nameValuePair "${toString port}/tcp" { }) imageConfig.system.exposedPorts
+      map (port: lib.nameValuePair "${toString port}/tcp" { }) imageConfig.image.exposedPorts
     );
     Volumes = {
       "/data" = { };
@@ -549,5 +514,7 @@ in
     coreRuntimeLayer
     rootFilesystem
     runtimeStoreLayer
+    factorySystemGeneration
+    supervisionLayer
     ;
 }

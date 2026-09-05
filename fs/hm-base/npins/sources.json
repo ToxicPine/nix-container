@@ -20,11 +20,11 @@
         "owner": "ToxicPine",
         "repo": "nix-supervise"
       },
-      "branch": "main",
+      "branch": "codex/system-composition",
       "submodules": false,
-      "revision": "0d8eb4c6be51682ba8e1ef629a0f1fd39144f1af",
-      "url": "https://github.com/ToxicPine/nix-supervise/archive/0d8eb4c6be51682ba8e1ef629a0f1fd39144f1af.tar.gz",
-      "hash": "sha256-Fyu99CUerlWFBAPskrn8kdvvLDuf+sISjImbK68L+88="
+      "revision": "a19541a78c6849f0bd1f239dbd9628519a5abc41",
+      "url": "https://github.com/ToxicPine/nix-supervise/archive/a19541a78c6849f0bd1f239dbd9628519a5abc41.tar.gz",
+      "hash": "sha256-1gK7XN3aOrN/lb3lPTljcU1dNjX+L4RZJfj7gKuqb7c="
     },
     "nixpkgs": {
       "type": "Channel",

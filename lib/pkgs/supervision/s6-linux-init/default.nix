@@ -1,15 +1,16 @@
 {
-  activateHomeManagerUsers,
+  boot,
   pkgs,
-  stopUserTrees,
+  treeRunner,
 }:
 
 let
   inherit (pkgs) lib;
 
   supervisionPath = lib.makeBinPath [
-    activateHomeManagerUsers
-    stopUserTrees
+    boot
+    treeRunner
+    pkgs.coreutils
     pkgs.execline
     pkgs.s6
     pkgs.s6-linux-init
@@ -17,6 +18,9 @@ let
     pkgs.s6-rc
   ];
 
+  # Longer than the runner's own shutdown window, so a hung cooperative
+  # shutdown is escalated by the runner rather than cut short by the host.
+  rootTreeShutdownTimeoutMs = 75000;
 in
 {
   # s6-linux-init-maker creates FIFOs, so this must run in the image's
@@ -54,23 +58,21 @@ in
     EOF
     chmod 0755 "$init_tree/bin/init"
 
-    nix_daemon_service_dir="$init_tree/run-image/service/nix-daemon"
-    mkdir -p "$nix_daemon_service_dir"
-    cat > "$nix_daemon_service_dir/run" <<'EOF'
+    # The root supervision tree is the only service the image itself defines.
+    # Its contents come from whichever generation stage 2 applies. PID 1 hands
+    # it a clean environment, so the image's library path is set here: account
+    # lookups go through the nss-altfiles module under /lib, and everything the
+    # tree supervises inherits it.
+    root_tree_service_dir="$init_tree/run-image/service/nix-supervise-system"
+    mkdir -p "$root_tree_service_dir"
+    cat > "$root_tree_service_dir/run" <<'EOF'
     #!/bin/sh
-    exec ${pkgs.s6}/bin/s6-envdir -I -f /run/s6-linux-init-env ./start
+    exec ${pkgs.coreutils}/bin/env \
+      LD_LIBRARY_PATH=/lib \
+      NIX_SUPERVISE_SHUTDOWN_TIMEOUT_MS=${toString rootTreeShutdownTimeoutMs} \
+      ${treeRunner}/bin/nix-supervise-tree-run fixed root /run/nix-supervise/system
     EOF
-    cat > "$nix_daemon_service_dir/start" <<'EOF'
-    #!/bin/sh
-    set -eu
-
-    if test -n "''${SYSTEM_IMAGE_NIX_DAEMON_STORE:-}"; then
-      set -- --store "''${SYSTEM_IMAGE_NIX_DAEMON_STORE}"
-    fi
-
-    exec ${pkgs.nix}/bin/nix-daemon "$@"
-    EOF
-    chmod 0755 "$nix_daemon_service_dir/run" "$nix_daemon_service_dir/start"
+    chmod 0755 "$root_tree_service_dir/run"
   '';
 
   packages = [

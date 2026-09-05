@@ -175,58 +175,21 @@ rm -rf \
   /run/nix-supervise \
   /run/service
 
-# The mutable passwd database is canonical. Reconstruct persistent homes and
-# optional Home Manager links for conventional /home/<name> users before any
-# activation can run.
-configured_users_file="/run/configured-users.tsv"
-awk -F: '$6 == "/home/" $1 { print $1 "\t" $3 "\t" $4 }' \
-  "${ACCOUNT_DATA_DIR}/passwd" >"${configured_users_file}"
-
-while IFS="$(printf '\t')" read -r user_name user_id group_id; do
-  persistent_home_dir="${DATA_DIR}/homes/${user_name}"
-  factory_settings_dir="/opt/defaults/hm-user/${user_name}"
-  shared_user_config_link="/opt/app/hm-user/${user_name}"
-  persistent_nix_config_dir="${persistent_home_dir}/.nixcfg"
-
-  mkdir -p "${persistent_home_dir}"
-  chown "${user_id}:${group_id}" "${persistent_home_dir}"
-  chmod 0700 "${persistent_home_dir}"
-
-  if test -L "${persistent_nix_config_dir}" \
-    || { test -e "${persistent_nix_config_dir}" && test ! -d "${persistent_nix_config_dir}"; }; then
-    echo "entrypoint: ignoring invalid ${persistent_nix_config_dir}; expected a real directory" >&2
-    rm -rf "${shared_user_config_link}"
-    continue
-  fi
-
-  seed_persistent_nix_config=false
-  if test -d "${factory_settings_dir}" && test ! -d "${persistent_nix_config_dir}"; then
-    seed_persistent_nix_config=true
-  elif test -d "${factory_settings_dir}"; then
-    first_config_entry="$("${BUSYBOX}" find "${persistent_nix_config_dir}" -mindepth 1 -maxdepth 1 -print -quit)"
-    if test -z "${first_config_entry}"; then
-      seed_persistent_nix_config=true
-    fi
-  fi
-
-  if test "${seed_persistent_nix_config}" = true; then
-    mkdir -p "${persistent_nix_config_dir}"
-    cp -R "${factory_settings_dir}/." "${persistent_nix_config_dir}/"
-  fi
-  rm -rf "${shared_user_config_link}"
-
-  if test -d "${persistent_nix_config_dir}"; then
-    chown -R "${user_id}:${group_id}" "${persistent_nix_config_dir}"
-    chmod -R u+rwX "${persistent_nix_config_dir}"
-  fi
-
-  if test -f "${persistent_nix_config_dir}/home.nix"; then
-    # Keep relative imports anchored in the shared image tree. ~/.nixcfg is
-    # already the real persistent directory through the /home link.
-    ln -snf "${persistent_nix_config_dir}" "${shared_user_config_link}"
-  fi
-done <"${configured_users_file}"
-rm -f "${configured_users_file}"
+# Root's supervision configuration persists beside the user homes. Seed it
+# from the factory copy on first boot and anchor the shared tree link to it.
+# It is the input of the generation that provisions everything else, so it is
+# the one piece of configuration the entrypoint still seeds itself: user
+# accounts, homes, and Home Manager links are services of that generation.
+system_config_dir="${DATA_DIR}/system/nixcfg"
+mkdir -p "${system_config_dir}"
+chmod 0700 "${DATA_DIR}/system"
+first_system_config_entry="$("${BUSYBOX}" find "${system_config_dir}" -mindepth 1 -maxdepth 1 -print -quit)"
+if test -z "${first_system_config_entry}"; then
+  cp -R /opt/defaults/system/. "${system_config_dir}/"
+fi
+chmod -R u+rwX "${system_config_dir}"
+rm -rf /opt/app/system
+ln -snf "${system_config_dir}" /opt/app/system
 
 # exec preserves PID 1. S6 continues boot in rc.init after its root scan is
 # running, so user activation never has to race supervision startup.

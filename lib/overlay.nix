@@ -6,10 +6,8 @@ let
   provision-user-home = pkgs.callPackage ./pkgs/provision-user-home { };
 in
 {
-  nix-store-bootstrap-diff = final.callPackage ./pkgs/nix-store-bootstrap-diff { };
   nss-altfiles = pkgs.callPackage ./pkgs/nss-altfiles { };
   inherit provision-user-home;
-  seed-user-hm = pkgs.callPackage ./pkgs/seed-user-hm { inherit provision-user-home; };
 
   shadow =
     (pkgs.shadow.override {

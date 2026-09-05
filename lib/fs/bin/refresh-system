@@ -2,7 +2,32 @@
 set -euo pipefail
 
 APP=/opt/app
-user="${USER:?USER must be set}"
+user="${KELLINGRAD_USER:-${USER:-$(id -un)}}"
+
+if [[ "${user}" = "root" ]]; then
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "refresh-system: the system configuration can only be refreshed as root" >&2
+    exit 1
+  fi
+
+  system_nix="${APP}/system/system.nix"
+  if [[ ! -f "${system_nix}" ]]; then
+    echo "refresh-system: no system.nix found at ${system_nix}" >&2
+    exit 1
+  fi
+
+  profile="/nix/var/nix/profiles/system"
+  export HOME="${HOME:-/root}"
+  if [[ -S /nix/var/nix/daemon-socket/socket ]]; then
+    export NIX_REMOTE=daemon
+  fi
+
+  result=$(nix-build --no-out-link "${APP}/system-base/refresh.nix")
+  mkdir -p "$(dirname "${profile}")"
+  nix-env -p "${profile}" --set "${result}"
+  exec "${result}/bin/apply"
+fi
+
 home_nix="${APP}/hm-user/${user}/home.nix"
 managed_nix="${APP}/hm-user/${user}/managed.nix"
 
