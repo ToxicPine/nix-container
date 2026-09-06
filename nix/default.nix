@@ -3,7 +3,7 @@
   sources ? import ../fs/hm-base/npins,
   overlays ? [
     ../fs/nix/system.nix
-    (import ../lib/modules/home-manager { })
+    (import ../lib/overlays/home-manager { })
   ],
 }:
 
@@ -15,11 +15,11 @@ let
   };
   # Ordered system overlays produce the factory generation and image defaults.
   # The template uses fs/nix/system.nix, also evaluated by runtime refresh.
-  initialSystem = import ../lib/fs/nix-base {
+  factorySystem = import ../lib/fs/scaffold {
     inherit pkgs sources overlays;
   };
 in
 import ../lib/image.nix {
-  inherit initialSystem;
-  inherit (initialSystem) pkgs sources;
+  inherit factorySystem;
+  inherit (factorySystem) pkgs sources;
 }

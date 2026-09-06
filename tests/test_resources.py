@@ -8,7 +8,8 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "lib/fs/nix-base/scripts/reconcile-accounts.sh"
+REPO = Path(__file__).resolve().parents[1]
+SCRIPT = REPO / "lib/fs/scaffold/scripts/reconcile-accounts.sh"
 
 
 class ResourceTests(unittest.TestCase):
@@ -39,15 +40,14 @@ class ResourceTests(unittest.TestCase):
         (self.generation / "sw/bin").mkdir(parents=True)
         self.data = {
             "users": {"alice": {"uid": 1000, "gid": 1000, "description": "Alice", "home": "/home/alice", "shell": "/bin/bash", "extraGroups": ["team"]}},
-            "groups": {"alice": {"gid": 1000, "members": []}, "team": {"gid": 1500, "members": ["manual"]}},
+            "groups": {"alice": {"gid": 1000, "members": []}, "team": {"gid": 1500, "members": []}},
         }
         # The production Shadow tools, NSS backend and home hook run in a
         # private mount/PID namespace. Host account files are never mounted.
+        # The "manual" fixture account is undeclared, so an apply removes it.
         (self.root / "run").mkdir()
         (self.root / "opt").mkdir()
         self.baseline = json.loads((self.runtime / "baseline-accounts.json").read_text())
-        state = self.root / "data/system/resources"
-        state.mkdir(parents=True, mode=0o700)
         (self.root / "data/homes").mkdir()
         self.host_etc = self.root / "etc"
         self.host_etc.mkdir()
@@ -91,18 +91,14 @@ class ResourceTests(unittest.TestCase):
                        if line.startswith("nixbld:"))
         self.assertEqual(set(members.split(",")), {f"nixbld{i}" for i in range(1, 11)})
         self.assertFalse(list((self.root / "data/homes").iterdir()))
-        self.assertFalse((self.root / "data/system/resources/owned.json").exists())
         self.assertFalse((self.root / "run/current-system").is_symlink())
         self.assertEqual((self.etc / "subuid").read_text(), "")
         before = {name: (self.etc / name).read_bytes() for name in ("passwd", "group", "shadow", "gshadow")}
         self.bootstrap()
         self.assertEqual(before, {name: (self.etc / name).read_bytes() for name in before})
 
-    def test_bootstrap_preserves_existing_accounts_and_runtime_journal(self):
+    def test_bootstrap_preserves_existing_accounts_and_memberships(self):
         self.bootstrap()
-        self.apply()
-        journal = self.root / "data/system/resources/owned.json"
-        before_journal = journal.read_bytes()
         passwd = self.etc / "passwd"
         passwd.write_text(passwd.read_text().replace("root:x:0:0:root:/root:/bin/bash",
                                                   "root:x:0:0:Local root:/root:/bin/sh"))
@@ -115,8 +111,7 @@ class ResourceTests(unittest.TestCase):
         self.assertIn("root:x:0:0:Local root:/root:/bin/sh", passwd.read_text())
         self.assertIn("manual,nixbld1", group.read_text())
         self.assertEqual(before_shadow, shadow.read_bytes())
-        self.assertEqual(before_journal, journal.read_bytes())
-        self.assertEqual((self.root / "run/current-system").resolve(), self.generation)
+        self.assertIn("manual:x:2200:2200:", passwd.read_text())
 
     def test_bootstrap_repairs_missing_accounts_and_checks_identity_conflicts(self):
         self.bootstrap()
@@ -139,37 +134,25 @@ class ResourceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "built-in users"):
             self.apply()
 
-    def test_runtime_repairs_core_accounts_without_recording_baseline(self):
+    def test_runtime_repairs_core_accounts_and_removes_undeclared_ones(self):
         self.apply()
         result = self.run_isolated(["/bin/userdel", "sshd"])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.data.update(users={}, groups={})
         self.apply()
-        self.assertIn("sshd:x:65533:65533:", (self.etc / "passwd").read_text())
-        self.assertIn("manual:x:2200:2200:", (self.etc / "passwd").read_text())
-        self.assertNotIn("alice:", (self.etc / "passwd").read_text())
-        state = self.root / "data/system/resources"
-        self.assertEqual(json.loads((state / "owned.json").read_text()), {"users": {}, "groups": {}})
-        self.assertEqual({p.name for p in state.iterdir()}, {"owned.json", "lock"})
+        passwd = (self.etc / "passwd").read_text()
+        self.assertIn("sshd:x:65533:65533:", passwd)
+        self.assertNotIn("manual:", passwd)
+        self.assertNotIn("alice:", passwd)
+        self.assertNotIn("manual:", (self.etc / "group").read_text())
+        self.assertEqual((self.etc / "subuid").read_text(), "")
+        self.assertFalse((self.root / "data/system").exists())
 
-    def test_unchanged_ownership_is_not_rewritten(self):
+    def test_declared_changes_are_applied_in_place(self):
         self.apply()
-        journal = self.root / "data/system/resources/owned.json"
-        before = journal.stat()
         self.data["users"]["alice"]["description"] = "Updated description"
         self.apply()
-        after = journal.stat()
-        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
-        self.assertIn("Updated description", (self.etc / "passwd").read_text())
-
-    def test_legacy_ownership_is_reduced_to_identities(self):
-        journal = self.root / "data/system/resources/owned.json"
-        journal.write_text(json.dumps({**self.data, "baseline": self.baseline}))
-        self.apply()
-        self.assertEqual(json.loads(journal.read_text()), {
-            "users": {"alice": {"uid": 1000, "gid": 1000}},
-            "groups": {"alice": {"gid": 1000}, "team": {"gid": 1500}},
-        })
+        self.assertIn("alice:x:1000:1000:Updated description:", (self.etc / "passwd").read_text())
 
     def test_failed_creation_can_be_withdrawn_on_next_apply(self):
         self.bootstrap()
@@ -186,9 +169,6 @@ exit 1
         self.data.update(users={}, groups={})
         self.apply()
         self.assertNotIn("alice:", (self.etc / "passwd").read_text())
-        self.assertIn("manual:", (self.etc / "passwd").read_text())
-        self.assertEqual({p.name for p in (self.root / "data/system/resources").iterdir()},
-                         {"owned.json", "lock"})
 
     def test_nix_can_build_as_a_bootstrapped_build_user(self):
         for name in ("passwd", "group", "shadow", "gshadow", "subuid", "subgid"):
@@ -232,7 +212,7 @@ exit 1
             raise RuntimeError(result.stderr)
 
     def run_isolated(self, command, input_text=None):
-        repo = SCRIPT.parents[4]
+        repo = REPO
         command = [str(arg).replace(str(repo) + "/", "/workspace/") for arg in command]
         return subprocess.run([
             "bwrap", "--unshare-pid", "--die-with-parent",
@@ -256,7 +236,8 @@ exit 1
         home_stat = (self.root / "data/homes/alice").stat()
         self.assertEqual((home_stat.st_uid, home_stat.st_gid), (1000, 1000))
         self.assertIn("alice:x:1000:1000:Alice:/home/alice:/bin/bash", (self.etc / "passwd").read_text())
-        self.assertIn("team:x:1500:alice,manual", (self.etc / "group").read_text())
+        self.assertIn("team:x:1500:alice", (self.etc / "group").read_text())
+        self.assertNotIn("manual:", (self.etc / "passwd").read_text())
         self.assertEqual((self.root / "run/current-system").resolve(), self.generation)
         home = self.root / "data/homes/alice/keep"
         home.write_text("personal data")
@@ -265,20 +246,18 @@ exit 1
         self.data["users"]["alice"]["shell"] = "/bin/false"
         self.data["users"]["alice"]["extraGroups"] = []
         self.apply()
-        self.assertIn("team:x:1500:manual", (self.etc / "group").read_text())
+        self.assertIn("team:x:1500:\n", (self.etc / "group").read_text())
         self.assertIn("alice:hashed-password:", shadow.read_text())
         users, groups = self.data["users"], self.data["groups"]
         self.data.update(users={}, groups={})
         self.apply()
         self.assertNotIn("alice:", (self.etc / "passwd").read_text())
         self.assertEqual(home.read_text(), "personal data")
-        self.assertEqual((self.etc / "subuid").read_text(), "manual:100000:65536\nmanual:200000:65536\n")
+        self.assertEqual((self.etc / "subuid").read_text(), "")
         self.data.update(users=users, groups=groups)
         self.apply()
         self.assertIn("alice:!:", shadow.read_text())
-        self.assertNotIn("passwords", json.loads((self.root / "data/system/resources/owned.json").read_text()))
         self.assertEqual(shadow.stat().st_mode & 0o777, 0o600)
-        self.assertEqual((self.root / "data/system/resources/owned.json").stat().st_mode & 0o777, 0o600)
 
     def test_uid_mismatch_fails_without_mutating_accounts(self):
         self.apply()
@@ -312,26 +291,25 @@ exit 1
         self.assertFalse((self.etc / "passwd.lock").exists())
         self.assertNotIn("alice:", (self.etc / "passwd").read_text())
 
-    def test_removed_group_still_used_by_manual_user_is_rejected(self):
+    def test_undeclared_account_holding_a_declared_uid_is_replaced(self):
+        # "manual" holds 2200 and is undeclared, so it goes before bob is created.
+        self.data["users"]["bob"] = dict(self.data["users"]["alice"], uid=2200, gid=2200,
+                                         home="/home/bob", description="Bob")
+        self.data["groups"]["bob"] = {"gid": 2200, "members": []}
         self.apply()
-        passwd = self.etc / "passwd"
-        passwd.write_text(passwd.read_text().replace("manual:x:2200:2200", "manual:x:2200:1500"))
-        self.data["users"]["alice"]["extraGroups"] = []
-        del self.data["groups"]["team"]
-        with self.assertRaisesRegex(RuntimeError, "primary group of an unmanaged user"):
-            self.apply()
+        passwd = (self.etc / "passwd").read_text()
+        self.assertIn("bob:x:2200:2200:Bob:/home/bob:/bin/bash", passwd)
+        self.assertNotIn("manual:", passwd)
+        self.assertIn("bob:x:2200:", (self.etc / "group").read_text())
 
-    def test_new_directories_have_public_parents_and_private_state(self):
+    def test_new_directories_have_public_parents_and_private_homes(self):
         self.apply()
-        for path in ("etc", "run", "data/system", "data/homes"):
+        for path in ("etc", "run", "run/lock", "data/homes"):
             self.assertEqual((self.root / path).stat().st_mode & 0o777, 0o755, path)
-        for path in ("data/system/resources", "data/homes/alice"):
-            self.assertEqual((self.root / path).stat().st_mode & 0o777, 0o700, path)
+        self.assertEqual((self.root / "data/homes/alice").stat().st_mode & 0o777, 0o700)
 
     def test_invalid_account_plan_does_not_write_databases(self):
         cases = [
-            (lambda: self.data["users"]["alice"].update(uid=2200), "already belongs"),
-            (lambda: self.data["groups"]["team"].update(gid=2200), "already belongs"),
             (lambda: self.data["groups"].update(other={"gid": 1500, "members": []}), "duplicate declared GIDs"),
             (lambda: self.data["users"].update(root=self.data["users"].pop("alice")), "built-in users"),
         ]
@@ -392,8 +370,10 @@ exit 1
 
     def test_userdel_hook_skips_nested_transition_but_still_handles_manual_deletion(self):
         hook = self.source.with_name("userdel-hook")
-        template = (SCRIPT.parents[4] / "lib/modules/home-manager/hooks/userdel-pre").read_text()
+        template = (REPO / "lib/overlays/home-manager/hooks/userdel-pre").read_text()
         hook.write_text(template.replace("@runtimeShell@", "/bin/bash")
+                        .replace("@id@", "/bin/id")
+                        .replace("@rm@", "/bin/rm")
                         .replace("@jq@", shutil.which("jq"))
                         .replace("@s6rc@", "/bin/test-s6-rc"))
         hook.chmod(0o755)
@@ -406,15 +386,21 @@ exit 1
         (supervision / "current-service-manifest.json").write_text(json.dumps({
             "services": {"tree": {"optionPath": "tree-alice"}}
         }))
+        # The stopped tree's uid-keyed runtime state goes with the account.
+        tree_runtime = self.root / "run/nix-supervise/users/1000"
+        (tree_runtime / "scan").mkdir(parents=True)
         users, groups = self.data["users"], self.data["groups"]
         self.data.update(users={}, groups={})
         self.apply()
         self.assertFalse((self.root / "data/s6-called").exists())
+        self.assertFalse(tree_runtime.exists())
         self.data.update(users=users, groups=groups)
         self.apply()
+        (tree_runtime / "scan").mkdir(parents=True)
         result = self.run_isolated(["/bin/userdel", "alice"])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / "data/s6-called").read_text(), "called\n")
+        self.assertFalse(tree_runtime.exists())
 
     def install_hm(self):
         # Use the actual rendered HM image fragment, including its executable hooks.
@@ -491,7 +477,7 @@ exit 1
         link.unlink()
         # Execute the production entrypoint's link restoration in the same
         # isolated filesystem, without bootstrapping Nix or starting PID 1.
-        entrypoint = (SCRIPT.parents[4] / "lib/packages/entrypoint/entrypoint.sh").read_text()
+        entrypoint = (REPO / "lib/packages/entrypoint/entrypoint.sh").read_text()
         restore = entrypoint.split("# Restore the image's HM links", 1)[1].split("# exec preserves PID 1", 1)[0]
         restore = restore.split("\n", 1)[1]
         result = self.run_isolated(["/bin/bash", "-eu", "-c", 'ACCOUNT_DATA_DIR=/data/etc\n' + restore])

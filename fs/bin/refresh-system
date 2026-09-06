@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP=/opt/app
-user="${KELLINGRAD_USER:-${USER:-$(id -un)}}"
+user="${SYSTEM_IMAGE_USER:-${USER:-$(id -un)}}"
 
 build_generation() {
   nix-build --no-out-link --argstr user "${user}" --expr '
@@ -16,7 +16,7 @@ build_generation() {
       };
     in
     if user == "root" then
-      (import /opt/app/nix-base {
+      (import /opt/app/scaffold {
         inherit pkgs sources;
         overlays = [ /opt/app/nix/system.nix ];
       }).generation
@@ -66,15 +66,20 @@ if [[ "${user}" = "root" ]]; then
 fi
 
 home_nix="${APP}/hm-user/${user}/home.nix"
-managed_nix="${APP}/hm-user/${user}/managed.nix"
 
 if [[ ! -f "${home_nix}" ]]; then
   echo "refresh-system: no home.nix found at ${home_nix}" >&2
   exit 1
 fi
 
-if [[ ! -f "${managed_nix}" ]]; then
-  echo "refresh-system: no managed.nix found at ${managed_nix}; run write-managed-hm --reset" >&2
+
+# Home Manager activation applies services into this user's supervision tree,
+# which only exists for accounts declared in the system configuration. Refuse
+# before building rather than failing after activation's write boundary.
+tree_runtime="/run/nix-supervise/users/$(id -u)"
+if [[ ! -d "${tree_runtime}" || "$(stat -c %u "${tree_runtime}")" != "$(id -u)" ]]; then
+  echo "refresh-system: ${user} has no supervision tree at ${tree_runtime}" >&2
+  echo "refresh-system: declare the account in /data/system/nixcfg/system.nix and run refresh-system as root" >&2
   exit 1
 fi
 

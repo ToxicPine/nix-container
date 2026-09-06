@@ -8,7 +8,7 @@ let
   inherit (pkgs) lib;
   evaluate =
     overlays:
-    import ../lib/fs/nix-base {
+    import ../lib/fs/scaffold {
       inherit
         pkgs
         sources
@@ -113,6 +113,7 @@ assert example.users.demo.uid == 1234;
 assert example.groups.demo.gid == 1234;
 assert example.components.demo.image.files ? "/etc/shadow-maint/useradd-post.d/60-demo";
 assert example.config.supervision.system.services.demo.s6.dependencies ? system-resources;
+assert !(example.config.supervision.system.services.nix-daemon.s6.dependencies ? system-resources);
 assert example.config.supervision.system.services.system-resources.s6.restartOnChange;
 assert lazyImage.generation.drvPath == base.generation.drvPath;
 assert !(disabled.components ? off);

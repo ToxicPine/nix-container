@@ -174,7 +174,7 @@ BASELINE_ACCOUNTS
 nix-store --load-db </nix-base/var/nix/db-base
 
 # Some OCI runtimes preserve the writable container overlay across a stop/start.
-# Recreate only Kellingrad's boot-scoped supervision state before starting S6.
+# Recreate only the image's boot-scoped supervision state before starting S6.
 rm -rf \
   /run/s6-linux-init-container-results \
   /run/s6-linux-init-env \

@@ -39,6 +39,10 @@ let
     ignoreCollisions = false;
   };
   declaredServices = collect "services";
+  # The base component's services need only the bootstrap identities created
+  # by the entrypoint. They stay up across resource changes, so a refresh does
+  # not restart the daemon that user activations are building through.
+  prerequisiteServices = lib.attrNames (components.base.services or { });
   accounts = import ./accounts.nix {
     inherit pkgs schema sw;
     users = collect "users";
@@ -59,10 +63,13 @@ let
             system-resources = accounts.service;
           }
           // lib.mapAttrs (
-            _: service:
-            lib.recursiveUpdate service {
-              s6.dependencies.system-resources = { };
-            }
+            name: service:
+            if builtins.elem name prerequisiteServices then
+              service
+            else
+              lib.recursiveUpdate service {
+                s6.dependencies.system-resources = { };
+              }
           ) declaredServices;
         };
       }

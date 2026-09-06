@@ -4,7 +4,7 @@ set -euo pipefail
 # Set ownership and permissions on a conventional user's persistent home.
 # Configuration provisioning belongs to the components that use the home.
 
-DATA="${KELLINGRAD_DATA:-/data}"
+DATA="${SYSTEM_IMAGE_DATA:-/data}"
 ACCOUNT_DATA_DIR="${DATA}/etc"
 command_name="provision-user-home"
 user_name="${1:-${SUBJECT:-}}"

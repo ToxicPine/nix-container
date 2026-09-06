@@ -8,11 +8,11 @@ validates and renders the result.
 
 This follows SixOS's use of ordinary Nix functions, constructor arguments and
 an overlay fixed point. We vendor upstream Infuse 2.6 unchanged, including its
-MIT notice; see `lib/fs/nix-base/vendor/README.md`. The container backend
+MIT notice; see `lib/fs/scaffold/vendor/README.md`. The container backend
 is local code. The service compiler and Home Manager still use their existing
 module evaluators internally.
 
-Both `nix/default.nix` and `lib/fs/nix-base/default.nix` accept `overlays`.
+Both `nix/default.nix` and `lib/fs/scaffold/default.nix` accept `overlays`.
 Every entry has the same shape as `system.nix` and can be a file path or a
 function. The evaluator supplies the requested arguments, including the final
 `pkgs` and `sources`. Entries run from left to right; `prev` includes preceding
@@ -26,14 +26,14 @@ import ./nix {
     ({ infuse, ... }: final: prev: infuse prev {
       image.name.__assign = "my-container";
     })
-    (import ./lib/modules/home-manager { buildProfiles = false; })
+    (import ./lib/overlays/home-manager { buildProfiles = false; })
   ];
 }
 ```
 
 The image entry point defaults to the `fs/nix/system.nix` overlay followed by
-`import ../lib/modules/home-manager { }`; supplying a list replaces those
-defaults. The bare `nix-base` evaluator defaults to `[]`,
+`import ../lib/overlays/home-manager { }`; supplying a list replaces those
+defaults. The scaffold alone defaults to `[]`,
 which keeps only its base component. The old singular `configuration` argument
 is replaced by an entry in this list; extra entries now use the same argument
 function as the first entry, rather than bare `final: prev:` functions.
@@ -43,7 +43,7 @@ only to an image build are not automatically persisted for later refreshes;
 shared runtime policy must also be included by the persistent configuration.
 `lib/image.nix` imports n2c internally using the composed package set.
 
-`lib/modules/home-manager/default.nix` is a build-only overlay constructor.
+`lib/overlays/home-manager/default.nix` is a build-only overlay constructor.
 Its `buildProfiles` option defaults to `true`; `factoryConfigDir` defaults to
 `fs/hm-user`. It adds the account hooks, per-user factory configurations and
 optional prebuilt profiles to the existing `home-manager` component's image
@@ -59,7 +59,7 @@ account and service declarations; it does not import the image integration.
 
 ## Evaluator layout
 
-The files in `lib/fs/nix-base` follow the evaluation flow:
+The files in `lib/fs/scaffold` follow the evaluation flow:
 
 | File | Responsibility |
 | --- | --- |
@@ -69,7 +69,7 @@ The files in `lib/fs/nix-base` follow the evaluation flow:
 | `accounts.nix` | Add private groups and package the account manifest and reconciliation service. |
 | `reconcile-accounts.nix` | Build the shared executable used by bootstrap and runtime reconciliation. |
 | `finalize.nix` | Collect component contributions, build the package environment and compile the supervision generation. |
-| `scripts/plan-accounts.jq` | Check declared identities against the live account databases and plan ownership changes. |
+| `scripts/plan-accounts.jq` | Check declared identities against the live account databases and plan removals. |
 | `scripts/reconcile-accounts.sh` | Apply that plan through Shadow and select the package environment. |
 
 The schema checks declaration values; collection rejects duplicate owners and
@@ -192,19 +192,22 @@ changes accounts and services but leaves the installed hooks in place.
 
 Account reconciliation exports `SYSTEM_RESOURCES_APPLY=1`. HM's userdel hook
 skips the service stop in this context because s6 already stopped dependent
-services. Its useradd hook initializes configuration for both declared and
-manually created accounts, selecting `/opt/defaults/hm-user/<name>` before
+services. In both cases it removes the stopped tree's uid-keyed runtime
+directory. Its useradd hook initializes configuration for the accounts it
+creates, selecting `/opt/defaults/hm-user/<name>` before
 falling back to `/opt/defaults/skel/.nixcfg`. It preserves initialized user
 configuration and sets ownership and permissions only on newly copied files.
 On container startup, the entrypoint restores `/opt/app/hm-user/<name>` links
 to existing configurations. It does not seed or repair user configuration;
 existing accounts without one can be initialized by root with
-`KELLINGRAD_USER=<name> reset-system`.
+`SYSTEM_IMAGE_USER=<name> reset-system`.
 
 ## Generation and mutable state
 
 Finalization creates a `system-resources` oneshot and makes every declared
-service depend on it. This reconciles accounts through Shadow, then
+service depend on it, except the base component's services: `nix-daemon` needs
+only the bootstrap identities and stays up across resource changes. The
+oneshot reconciles accounts through Shadow, then
 switches `/run/current-system` to the generation's resource tree. The tree
 contains the package environment and the account manifest. The
 oneshot has `restartOnChange`, so changing resources causes dependent services
@@ -229,17 +232,17 @@ needs its own startup or shutdown to finish; it is not a prerequisite oneshot
 that recursively applies the tree currently starting it. No automatic refresh
 service is supplied by the backend.
 
-Accounts declared by components are authoritative for their names. Their
-shells, descriptions and group memberships are reconciled; removing their
-declarations removes the accounts and stops dependent services. Homes remain.
-The Bash account reconciler delegates account changes to the image's patched
-`useradd`, `usermod`, `userdel`, `groupadd`, `groupmod`, and `groupdel` commands.
-Passwords survive updates. Deletion uses normal Shadow behavior: homes remain,
-but password records are removed and a recreated account starts locked.
-Unmanaged users and built-in accounts remain in the database. Shadow manages
-subuid/subgid ranges according to the persistent account-tool configuration.
+The configuration is the only source of account identities. Declared users
+and groups have their shells, descriptions and memberships reconciled; users
+and groups it does not declare are removed, and removing a declaration stops
+the dependent services. Homes remain. The Bash account reconciler delegates
+account changes to the image's patched `useradd`, `usermod`, `userdel`,
+`groupadd`, `groupmod`, and `groupdel` commands. Passwords survive updates.
+Deletion uses normal Shadow behavior: homes remain, but password records are
+removed and a recreated account starts locked. Shadow manages subuid/subgid
+ranges according to the persistent account-tool configuration.
 
-Baseline identities are defined once in `lib/fs/nix-base/baseline-accounts.nix` and embedded in
+Baseline identities are defined once in `lib/fs/scaffold/baseline-accounts.nix` and embedded in
 the entrypoint, which passes them through stdin. There is no installed baseline
 JSON file. The image carries empty account databases.
 After restoring the store, the entrypoint invokes the prebuilt account program
@@ -249,33 +252,46 @@ build-user pool. This uses the same Shadow application code as declared users.
 
 Bootstrap creates missing identities and ensures required group memberships.
 It preserves existing passwords, account settings and extra memberships, and
-rejects conflicting UIDs/GIDs. It does not delete accounts or publish a
-generation or write an ownership record. Runtime Nix imports the same baseline
+rejects conflicting UIDs/GIDs. It does not delete accounts, remove memberships
+or publish a generation. Runtime Nix imports the same baseline
 definition into each desired configuration, so refresh also restores missing
 core accounts and ensures their required memberships. No baseline history or
 second built-in name list is maintained. The image starts as
-numeric `0:0`; an OCI `--user root` override
-cannot resolve a name from its initially empty `/etc/passwd`.
+numeric `0:0`; an OCI `--user <name>` override
+cannot resolve a name from its initially empty `/etc/passwd`; use numeric IDs.
 
-The backend records ownership in `/data/system/resources/owned.json` with mode
-0600. This contains only declared account names and numeric IDs, allowing
-withdrawn declarations to be removed while preserving manually created accounts.
-Inputs, planning results and loop data stay in memory or flow through pipes;
-only atomic ownership replacement needs a temporary file. Unchanged ownership
-is not rewritten. Shadow owns the account database writes and their locks; the wrapper
-serializes resource applications with a separate lock. Do not edit declared accounts
-concurrently or use account tools as a second source of their configuration.
-Standard tools remain usable for unmanaged accounts and password changes.
-UID/GID mismatches fail before writing account files: migrating identities and
-existing file ownership requires an explicit migration. When adopting an old
-volume, declare its existing GID if it differs from the UID.
+Nothing records which accounts a configuration created: each apply removes
+whatever the current configuration does not declare, so an interrupted apply
+is retried by applying again. Inputs and planning results stay in memory or
+flow through pipes; only the `/run/current-system` replacement needs a
+temporary file. Shadow owns the account database writes and their locks; the
+wrapper serializes whole applies with `/run/lock/system-accounts`. Account
+tools remain the way to set passwords, not a second source of account
+configuration. UID/GID mismatches fail before writing account files: migrating
+identities and existing file ownership requires an explicit migration. When
+adopting an old volume, declare every account it should keep, with its
+existing GID where that differs from the UID; the first apply removes the rest.
 
-The ownership journal and selected-generation link are replaced atomically,
-but a complete apply across account-tool invocations and services is not a transaction. The journal
-allows an interrupted apply to be retried; a failed apply can have made partial
-progress and does not automatically select the factory generation. A process
-killed while holding account locks can leave `.lock` files requiring stale-lock
-recovery. Mutable data is not included in generation rollback.
+The selected-generation link is replaced atomically, but a complete apply
+across account-tool invocations and services is not a transaction. A failed
+apply can have made partial progress; it converges when rerun and does not
+automatically select the factory generation. A process killed while holding
+account locks can leave `.lock` files requiring stale-lock recovery. Mutable
+data is not included in generation rollback.
+
+Build failure and activation failure are different:
+
+| Failure | Result |
+| --- | --- |
+| Root evaluation/build | Refresh returns failure without changing the profile or live system. |
+| Root application | Returns failure; the new root profile stays selected. Services and resources may be partially changed; there is no automatic rollback. Resource failure prevents its dependent services from starting. |
+| HM evaluation/build | Existing profile and home remain untouched. With HM `rebuildOnBoot = true`, the apply oneshot fails without activating the old profile, so user services may remain down on a fresh boot. |
+| HM activation | Checks such as file-collision detection run before the write boundary. After that boundary, the profile may already select the new generation and files, packages or services may be partially changed. There is no automatic rollback. |
+
+These are retryable, non-transactional activations. Retaining the selected
+service set after a failure avoids removing unrelated services through a
+factory fallback. Old generations remain available for deliberate recovery;
+switching a profile alone does not undo mutable data changes or apply services.
 
 ## Image rendering
 

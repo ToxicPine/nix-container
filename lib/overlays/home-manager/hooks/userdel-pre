@@ -1,0 +1,32 @@
+#!@runtimeShell@
+# shellcheck shell=sh
+set -eu
+
+: "${SUBJECT:?userdel did not provide SUBJECT}"
+
+# The tree runner keys this user's runtime state by uid. Once the tree is
+# down, that state must not outlive the account: a later account with the
+# same uid would otherwise inherit it.
+runtime_directory="/run/nix-supervise/users/$(@id@ -u "${SUBJECT}")"
+
+# Resource application runs inside an s6 transition after dependent services
+# have stopped. Re-entering s6-rc here would contend with that transition.
+if test "${SYSTEM_RESOURCES_APPLY:-}" = 1; then
+  @rm@ -rf "${runtime_directory}"
+  exit 0
+fi
+
+# Stop the user's supervision tree and its activation oneshot through the
+# root tree's live database. The runtime name comes from the manifest, which
+# records each service's declared option path.
+manifest=/run/nix-supervise/system/current-service-manifest.json
+live=/run/nix-supervise/system/live
+if test -f "${manifest}" && test -L "${live}"; then
+  tree_service="$(@jq@ -r --arg path "tree-${SUBJECT}" \
+    ".services | to_entries[] | select(.value.optionPath == \$path) | .key" "${manifest}")"
+  if test -n "${tree_service}"; then
+    @s6rc@ -l "${live}" -d change "${tree_service}"
+  fi
+fi
+
+@rm@ -rf "${runtime_directory}"

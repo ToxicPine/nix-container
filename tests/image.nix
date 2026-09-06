@@ -30,7 +30,7 @@ pkgs.runCommand "system-image-contract-tests"
     test -d ${image.rootFilesystem}/etc/shadow-maint/useradd-post.d
     test ! -L ${image.rootFilesystem}/etc/shadow-maint
     test ! -L ${image.rootFilesystem}/etc/shadow-maint/useradd-post.d
-    test -x ${image.rootFilesystem}/etc/shadow-maint/useradd-post.d/50-kellingrad-home
+    test -x ${image.rootFilesystem}/etc/shadow-maint/useradd-post.d/50-provision-home
     test ! -e ${image.rootFilesystem}/etc/shadow-maint/useradd-post.d/60-home-manager
     test -x ${image.componentFilesystems.home-manager}/etc/shadow-maint/useradd-post.d/60-home-manager
     test -x ${image.componentFilesystems.home-manager}/etc/shadow-maint/userdel-pre.d/50-home-manager-services
@@ -40,11 +40,11 @@ pkgs.runCommand "system-image-contract-tests"
     test -d ${image.rootFilesystem}/opt/app/hm-user
     test -x ${image.rootFilesystem}/opt/app/bin/refresh-system
     test ! -e ${image.rootFilesystem}/opt/app/hm-user/refresh.nix
-    test ! -e ${image.rootFilesystem}/opt/app/nix-base/refresh.nix
+    test ! -e ${image.rootFilesystem}/opt/app/scaffold/refresh.nix
     # Build-only HM sources are absent from both installed configuration trees.
     for prefix in app defaults; do
       test ! -e ${image.rootFilesystem}/opt/"$prefix"/nix/scripts/hooks
-      test ! -e ${image.rootFilesystem}/opt/"$prefix"/modules/home-manager
+      test ! -e ${image.rootFilesystem}/opt/"$prefix"/overlays/home-manager
       test -f ${image.rootFilesystem}/opt/"$prefix"/nix/home-manager.nix
     done
     touch "$out"

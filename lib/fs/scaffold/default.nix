@@ -1,5 +1,5 @@
 # Compose a system first; rendering it must not erase component ownership.
-# This directory is also installed at /opt/app/nix-base for refresh-system.
+# This directory is also installed with the rest of lib/fs at /opt/app for fs/bin/refresh-system.
 {
   pkgs,
   sources,

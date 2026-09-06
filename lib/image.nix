@@ -1,17 +1,17 @@
 {
   localOverlayStore ? null,
   pkgs,
-  initialSystem,
+  factorySystem,
   sources,
 }:
 
 let
   n2c = import ../n2c { inherit pkgs; };
-  overlay = import ./overlay.nix { inherit pkgs; };
+  overlay = import ./packages/overlay.nix { inherit pkgs; };
   imagePkgs = pkgs.extend overlay;
   inherit (pkgs) lib;
   nixSupervisionPackages = pkgs.callPackages "${sources.nix-supervise}/pkgs" { };
-  imageConfig = initialSystem.image;
+  imageConfig = factorySystem.image;
   # Image files can refer to a file within a store object; layer dependencies
   # must carry the entire object, not just that file.
   storeRoot =
@@ -41,7 +41,7 @@ let
           }
         ))
       ];
-  }) initialSystem.components;
+  }) factorySystem.components;
   orderedComponentNames = lib.sort (
     a: b:
     if imageComponents.${a}.order == imageComponents.${b}.order then
@@ -116,10 +116,10 @@ let
   # root has ever run refresh-system. Declared users, their seeding, and root
   # services all come from it. Baseline system accounts are created earlier
   # by the entrypoint using the same account application program.
-  factorySystemGeneration = initialSystem.generation;
+  factorySystemGeneration = factorySystem.generation;
 
-  baselineAccounts = import ./fs/nix-base/baseline-accounts.nix { inherit lib; };
-  reconcileAccounts = import ./fs/nix-base/reconcile-accounts.nix { inherit pkgs; };
+  baselineAccounts = import ./fs/scaffold/baseline-accounts.nix { inherit lib; };
+  reconcileAccounts = import ./fs/scaffold/reconcile-accounts.nix { inherit pkgs; };
 
   componentFilesystems = lib.mapAttrs (
     name: component:
@@ -172,13 +172,13 @@ let
       fi
     '';
 
-  staticCommandNames = lib.attrNames (
-    lib.filterAttrs (_name: type: type == "regular" || type == "symlink") (builtins.readDir ./fs/bin)
+  helperCommandNames = lib.attrNames (
+    lib.filterAttrs (_name: type: type == "regular" || type == "symlink") (builtins.readDir ../fs/bin)
   );
 
-  linkStaticCommands = lib.concatMapStringsSep "\n" (name: ''
+  linkHelperCommands = lib.concatMapStringsSep "\n" (name: ''
     ln -s ${mutableConfigPrefix}/bin/${name} "$out/usr/bin/${name}"
-  '') staticCommandNames;
+  '') helperCommandNames;
 
   maximumImageLayerCount = 125;
   supervisionLayerCount = 1;
@@ -246,7 +246,6 @@ let
   supervisionLayer = layerState.byName.supervision;
   coreRuntimeLayer = layerState.byName.core;
   componentLayers = lib.genAttrs orderedComponentNames (name: layerState.byName."component-${name}");
-  runtimeStoreLayer = lib.last layerState.layers;
 
   rootEnvironment = pkgs.buildEnv {
     name = "system-image-root-environment";
@@ -323,8 +322,11 @@ let
     sed -i -E '/^[[:space:]]*MAIL_(CHECK_ENAB|DIR|FILE)[[:space:]]/d' "$out/etc/login.defs"
     mkdir -p "$out/usr/bin"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
-    ${linkStaticCommands}
+    ${linkHelperCommands}
 
+    # lib/fs is image machinery that runtime commands import from the working
+    # tree, such as the scaffold. It is installed first, and the template never
+    # clobbers it: the same path in fs/ cannot replace image code.
     ${installTree {
       source = ./fs;
       destination = mutableConfigPrefix;
@@ -433,7 +435,6 @@ assert checkLayerBudget;
     factorySystemGeneration
     coreRuntimeLayer
     rootFilesystem
-    runtimeStoreLayer
     supervisionLayer
     ;
 }

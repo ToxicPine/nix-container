@@ -1,5 +1,5 @@
 # Build-only Home Manager integration. This overlay is never copied into /opt.
-# Configure image policy here, then supply the returned overlay to nix-base.
+# Configure image policy here, then supply the returned overlay to lib/fs/scaffold.
 {
   buildProfiles ? true,
   factoryConfigDir ? ../../../fs/hm-user,
@@ -27,6 +27,8 @@ let
       --replace-fail '@rm@' '${pkgs.coreutils}/bin/rm'
     substitute ${./hooks/userdel-pre} "$out/userdel-pre" \
       --replace-fail '@runtimeShell@' '${pkgs.runtimeShell}' \
+      --replace-fail '@id@' '${pkgs.coreutils}/bin/id' \
+      --replace-fail '@rm@' '${pkgs.coreutils}/bin/rm' \
       --replace-fail '@jq@' '${pkgs.jq}/bin/jq' \
       --replace-fail '@s6rc@' '${nixSupervisePackages.s6Rc}/bin/s6-rc'
     chmod 0755 "$out/"*

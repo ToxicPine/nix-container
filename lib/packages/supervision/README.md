@@ -21,13 +21,14 @@ goal is that as little as possible is fixed by the image:
    dependency-ordered `s6-rc` shutdown of everything it supervises, user trees
    included, before s6-linux-init's final teardown.
 
-The generation is produced by `lib/fs/nix-base`. It composes ordinary Nix
+The generation is produced by `lib/fs/scaffold`. It composes ordinary Nix
 components through Infuse overlays, then renders their services with
 nix-supervise's portable system-scope evaluator. `finalize.nix` fixes the root
 tree's paths and assembles the generation; `base.nix` contributes `nix-daemon`
 with socket readiness. `accounts.nix` prepares the `system-resources` oneshot
 to reconcile declared accounts and select the package environment. Every
-declared service depends on it. Resource changes restart dependent services;
+declared service outside the base component depends on it; `nix-daemon` stays
+up across resource changes. Resource changes restart dependent services;
 homes and other mutable state are retained.
 
 Home Manager is a component constructor in `fs/nix/home-manager.nix`. For
@@ -38,7 +39,7 @@ the activation script as the user once the tree and the daemon are up. Home
 Manager's own activation step applies the user's services into the
 already-running tree, so `refresh-system` for users is unchanged.
 
-The build-only overlay in `lib/modules/home-manager` adds factory
+The build-only overlay in `lib/overlays/home-manager` adds factory
 configurations, prebuilt profiles and account hooks to the same component's
 image layer. `nix/default.nix` applies it after the runtime system overlay.
 Its Nix implementation and hook templates are not copied into `/opt/app` or
@@ -63,9 +64,10 @@ evaluates the repository copy into the factory generation; `refresh-system`
 as root evaluates the persistent copy in `/data/system/nixcfg`, so adding a
 user at runtime is the same declaration followed by a refresh, and the change
 goes live through `s6-rc-update` like everything else. The `userdel` hook
-only stops the user's tree; the account database is not consulted to decide
-what runs. The account reconciler removes accounts whose declarations were
-removed using `userdel`. The hook skips its service stop when
+stops the user's tree and removes its runtime directory; the account database
+is not consulted to decide
+what runs. The account reconciler removes every account the configuration
+does not declare, using `userdel`. The hook skips its service stop when
 `SYSTEM_RESOURCES_APPLY=1`, avoiding a nested s6 transition.
 See `docs/COMPOSITION.md` for the full composition and ownership contract.
 

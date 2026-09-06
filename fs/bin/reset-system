@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="${KELLINGRAD_APP:-/opt/app}"
-DEFAULTS="${KELLINGRAD_DEFAULTS:-/opt/defaults}"
-DATA="${KELLINGRAD_DATA:-/data}"
+APP="${SYSTEM_IMAGE_APP:-/opt/app}"
+DEFAULTS="${SYSTEM_IMAGE_DEFAULTS:-/opt/defaults}"
+DATA="${SYSTEM_IMAGE_DATA:-/data}"
 command_name="reset-system"
 refresh=1
 original_args=("$@")
@@ -34,7 +34,7 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 
-user="${KELLINGRAD_USER:-${USER:-$(id -un)}}"
+user="${SYSTEM_IMAGE_USER:-${USER:-$(id -un)}}"
 
 # Root resets the system configuration: the root supervision tree's
 # generation source, seeded from the factory copy.
@@ -64,7 +64,9 @@ if [[ "${user}" = "root" ]]; then
 
   echo "Reset ${system_config_dir} from ${factory}"
   if [[ "${refresh}" = "1" ]]; then
-    exec env KELLINGRAD_USER=root "${APP}/bin/refresh-system"
+    # The reset replaced the directory a caller may be standing in.
+    cd /
+    exec env SYSTEM_IMAGE_USER=root "${APP}/bin/refresh-system"
   fi
   echo "Skipped refresh; run refresh-system as root to apply the reset config."
   exit 0
@@ -80,7 +82,7 @@ fi
 current_uid="$(id -u)"
 if [[ "${current_uid}" != "${uid}" ]]; then
   if [[ "${current_uid}" != "0" ]]; then
-    echo "${command_name}: run as ${user} or as root with KELLINGRAD_USER=${user}" >&2
+    echo "${command_name}: run as ${user} or as root with SYSTEM_IMAGE_USER=${user}" >&2
     exit 1
   fi
 
@@ -92,8 +94,8 @@ if [[ "${current_uid}" != "${uid}" ]]; then
   ln -snf "${persist}/.nixcfg" "${APP}/hm-user/${user}"
 
   exec setpriv --reuid="${uid}" --regid="${gid}" --init-groups \
-    env HOME="/home/${user}" USER="${user}" PATH="${PATH}" KELLINGRAD_USER="${user}" \
-    KELLINGRAD_APP="${APP}" KELLINGRAD_DEFAULTS="${DEFAULTS}" KELLINGRAD_DATA="${DATA}" \
+    env HOME="/home/${user}" USER="${user}" PATH="${PATH}" SYSTEM_IMAGE_USER="${user}" \
+    SYSTEM_IMAGE_APP="${APP}" SYSTEM_IMAGE_DEFAULTS="${DEFAULTS}" SYSTEM_IMAGE_DATA="${DATA}" \
     "$0" "${original_args[@]}"
 fi
 
@@ -126,7 +128,7 @@ trap - EXIT
 echo "Reset ${nixcfg} from ${factory}"
 
 if [[ "${refresh}" = "1" ]]; then
-  "${APP}/bin/refresh-system"
+  (cd / && "${APP}/bin/refresh-system")
 else
   echo "Skipped refresh; run refresh-system to activate the reset config."
 fi

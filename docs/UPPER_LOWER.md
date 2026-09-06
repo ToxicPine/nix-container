@@ -40,7 +40,7 @@ the image does not need to embed those profile closures. Disable profile builds
 in the build-only HM overlay, selected by `nix/default.nix`:
 
 ```nix
-import ../lib/modules/home-manager { buildProfiles = false; }
+import ../lib/overlays/home-manager { buildProfiles = false; }
 ```
 
 When activation is enabled, a missing profile is built when the container boots.

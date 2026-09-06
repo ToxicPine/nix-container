@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Ensure baseline accounts at bootstrap, or reconcile a declared generation.
-# Individual replacements are atomic; the complete application is not.
+# Ensure baseline accounts at bootstrap, or make the account database match a
+# declared generation. Individual replacements are atomic; the complete
+# application is not, but it is idempotent: rerunning converges.
 set -euo pipefail
 umask 077
 
@@ -16,10 +17,6 @@ temporary_paths=()
 
 fail() { printf 'system-reconcile-accounts: %s\n' "$*" >&2; exit 1; }
 mkdir_public() { (umask 022; mkdir -p -- "$@"); }
-mkdir_private() {
-    mkdir_public "${1%/*}"
-    [[ -d $1 ]] || mkdir -m 700 -- "$1"
-}
 cleanup() {
     local path
     for path in "${temporary_paths[@]}"; do rm -rf -- "${path}"; done
@@ -43,21 +40,6 @@ safe_path() {
     done
 }
 
-# Only the ownership update needs a temporary file, beside its destination
-# so rename stays atomic. Bootstrap has no ownership history to record.
-record_ownership() {
-    local selection=$1 next_owned staged
-    if [[ ${mode} == bootstrap ]]; then return; fi
-    next_owned=$(jq -cS "${selection}" <<< "${plan}")
-    if [[ ${next_owned} == "${owned}" ]]; then return; fi
-    staged=$(mktemp -- "${state_dir}/.system-XXXXXXXX")
-    temporary_paths+=("${staged}")
-    printf '%s\n' "${next_owned}" > "${staged}"
-    sync -- "${staged}"
-    mv -fT -- "${staged}" "${state_file}"
-    owned=${next_owned}
-}
-
 replace_link() {
     local destination=$1 target=$2 staging
     staging=$(mktemp -d -- "${destination%/*}/.system-XXXXXXXX")
@@ -68,20 +50,14 @@ replace_link() {
 }
 
 load_state() {
-    safe_path /data/system/resources
-    state_dir=${REPLY}
-    [[ ! -L ${state_dir} ]] || fail 'resource state must not be symlinked'
-    mkdir_private "${state_dir}"
-    exec {resource_lock}> "${state_dir}/lock"
-    flock -x "${resource_lock}"
-    state_file=${state_dir}/owned.json
-    [[ ! -L ${state_file} ]] || fail 'resource journal must not be symlinked'
-    owned='{}'
+    # Shadow locks each database write; this lock serializes whole applies.
+    mkdir_public /run/lock
+    exec {apply_lock}> /run/lock/system-accounts
+    flock -x "${apply_lock}"
     if [[ ${mode} == bootstrap ]]; then
         manifest=$(cat)
     else
         manifest=$(cat -- "${resources}/manifest.json")
-        if [[ -e ${state_file} ]]; then owned=$(jq -cS . "${state_file}"); fi
         safe_path /run/current-system
         current=${REPLY}
         [[ ! -e ${current} || -L ${current} ]] || fail 'current-system must be a symlink'
@@ -104,7 +80,7 @@ validate_accounts() {
     for name in passwd group shadow gshadow subuid subgid; do
         [[ ! -L ${account_dir}/${name} ]] || fail "account database is symlinked: ${account_dir}/${name}"
     done
-    plan=$(jq --arg mode "${mode}" --argjson owned "${owned}" \
+    plan=$(jq --arg mode "${mode}" \
         --rawfile passwd "${account_dir}/passwd" --rawfile group "${account_dir}/group" \
         -f "${account_lib}/plan-accounts.jq" <<< "${manifest}")
 }
@@ -141,7 +117,10 @@ reconcile_accounts() {
                 /bin/usermod "${options[@]}" -- "${name}"
             elif [[ -z ${REPLY} ]]; then
                 if [[ ${fields[7]} == true ]]; then
-                    creation=(--system --no-create-home)
+                    # System accounts get no home or subordinate ID ranges. The
+                    # per-invocation SYS_UID_MAX override only silences useradd's
+                    # warning about fixed baseline UIDs above the login.defs range.
+                    creation=(--system --no-create-home -K "SYS_UID_MAX=${fields[1]}")
                 else
                     creation=(--create-home --skel /var/empty)
                 fi
@@ -150,12 +129,13 @@ reconcile_accounts() {
             # Also repairs homes for adopted accounts or an interrupted hook.
             if [[ ${fields[7]} == false ]]; then /bin/provision-user-home "${name}"; fi
         done
-    # Core groups retain local additions while ensuring required memberships.
-    jq -j --rawfile existing "${account_dir}/group" '
+    # Memberships are declared exactly. Bootstrap never removes one: it only
+    # ensures the required baseline memberships before a generation applies.
+    jq -j --arg mode "${mode}" --rawfile existing "${account_dir}/group" '
         . as $data | .groups | to_entries[] | .key as $name |
         [.key, ((.value.members + [$data.users | to_entries[] |
           select(.value.extraGroups | index($name)) | .key] +
-          (if .value.baseline then
+          (if $mode == "bootstrap" then
             [$existing | split("\n")[] | split(":") | select(.[0] == $name) |
               .[3] | split(",")[] | select(. != "")]
            else [] end)) | unique | join(","))] | .[] | ., "\u0000"' <<< "${plan}" |
@@ -169,11 +149,9 @@ publish_generation() {
         mkdir_public "${current%/*}"
         replace_link "${current}" "${resources}"
     fi
-    record_ownership '.completed'
 }
 
 load_state
 validate_accounts
-record_ownership '.journal'
 reconcile_accounts
 publish_generation

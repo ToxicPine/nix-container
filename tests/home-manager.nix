@@ -4,7 +4,7 @@ let
   pkgs = import sources.nixpkgs { };
   evaluate =
     overlays:
-    import ../lib/fs/nix-base {
+    import ../lib/fs/scaffold {
       inherit
         pkgs
         sources
@@ -19,7 +19,7 @@ let
         users.alice.uid = 1000;
       };
     };
-  imageOverlay = import ../lib/modules/home-manager { buildProfiles = false; };
+  imageOverlay = import ../lib/overlays/home-manager { buildProfiles = false; };
   runtime = evaluate [ configuration ];
   enabled = evaluate [
     configuration

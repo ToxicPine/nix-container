@@ -2,11 +2,11 @@
 let
   sources = import ../fs/hm-base/npins;
   pkgs = import sources.nixpkgs { };
-  imagePkgs = pkgs.extend (import ../lib/overlay.nix { inherit pkgs; });
+  imagePkgs = pkgs.extend (import ../lib/packages/overlay.nix { inherit pkgs; });
   image = import ../nix {
     overlays = [
       ../fs/nix/system.nix
-      (import ../lib/modules/home-manager { buildProfiles = false; })
+      (import ../lib/overlays/home-manager { buildProfiles = false; })
     ];
   };
   commands = pkgs.buildEnv {
@@ -42,7 +42,7 @@ pkgs.linkFarm "resource-test-tools" [
   {
     name = "baseline-accounts.json";
     path = pkgs.writeText "baseline-accounts.json" (
-      builtins.toJSON (import ../lib/fs/nix-base/baseline-accounts.nix { inherit (pkgs) lib; })
+      builtins.toJSON (import ../lib/fs/scaffold/baseline-accounts.nix { inherit (pkgs) lib; })
     );
   }
   {
