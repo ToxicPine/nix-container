@@ -4,13 +4,50 @@ set -euo pipefail
 APP=/opt/app
 user="${KELLINGRAD_USER:-${USER:-$(id -un)}}"
 
+build_generation() {
+  nix-build --no-out-link --argstr user "${user}" --expr '
+    { user, system ? builtins.currentSystem }:
+    let
+      sources = import /opt/app/hm-base/npins;
+      pkgs = import sources.nixpkgs {
+        localSystem.system = system;
+        config.allowUnfree = true;
+        overlays = [ (import /opt/app/overlay.nix) ];
+      };
+    in
+    if user == "root" then
+      (import /opt/app/nix-base {
+        inherit pkgs sources;
+        overlays = [ /opt/app/nix/system.nix ];
+      }).generation
+    else
+      let home-manager = import sources.home-manager { inherit pkgs; };
+      in (home-manager.lib.homeManagerConfiguration {
+        inherit pkgs;
+        modules = [
+          (/opt/app/hm-user + ("/" + user + "/home.nix"))
+          {
+            home.username = user;
+            home.homeDirectory = "/home/" + user;
+          }
+        ];
+      }).activationPackage
+  '
+}
+
+if (( $# != 0 )); then
+  echo 'usage: refresh-system' >&2
+  exit 2
+fi
+
 if [[ "${user}" = "root" ]]; then
-  if [[ "$(id -u)" != "0" ]]; then
+  current_uid=$(id -u)
+  if [[ "${current_uid}" != "0" ]]; then
     echo "refresh-system: the system configuration can only be refreshed as root" >&2
     exit 1
   fi
 
-  system_nix="${APP}/system/system.nix"
+  system_nix="${APP}/nix/system.nix"
   if [[ ! -f "${system_nix}" ]]; then
     echo "refresh-system: no system.nix found at ${system_nix}" >&2
     exit 1
@@ -22,8 +59,8 @@ if [[ "${user}" = "root" ]]; then
     export NIX_REMOTE=daemon
   fi
 
-  result=$(nix-build --no-out-link "${APP}/system-base/refresh.nix")
-  mkdir -p "$(dirname "${profile}")"
+  result=$(build_generation)
+  mkdir -p "${profile%/*}"
   nix-env -p "${profile}" --set "${result}"
   exec "${result}/bin/apply"
 fi
@@ -41,9 +78,6 @@ if [[ ! -f "${managed_nix}" ]]; then
   exit 1
 fi
 
-result=$(nix-build \
-  --no-out-link \
-  --argstr user "${user}" \
-  "${APP}/hm-user/refresh.nix")
+result=$(build_generation)
 
 "${result}/activate"

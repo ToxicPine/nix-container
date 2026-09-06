@@ -3,10 +3,10 @@
 final: _prev:
 
 let
-  provision-user-home = pkgs.callPackage ./pkgs/provision-user-home { };
+  provision-user-home = pkgs.callPackage ./packages/provision-user-home { };
 in
 {
-  nss-altfiles = pkgs.callPackage ./pkgs/nss-altfiles { };
+  nss-altfiles = pkgs.callPackage ./packages/nss-altfiles { };
   inherit provision-user-home;
 
   shadow =

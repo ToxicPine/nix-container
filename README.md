@@ -11,7 +11,8 @@ environments as OCI (Docker, etc.) images.
 The important difference from a conventional container image is that the set
 of users and services is not frozen at build time. Inside a running container:
 
-- standard account tools can add, modify, and remove persistent users;
+- the system configuration manages declared accounts, while standard account
+  tools can manage additional persistent users;
 - each managed user has a declarative [Nix](https://nix.dev/) configuration,
   applied by [Home Manager](https://github.com/nix-community/home-manager),
   that determines the packages and settings in their environment; and
@@ -30,9 +31,9 @@ your own image:
 
 | Path | Customize here |
 | --- | --- |
-| `nix/image.nix` | Image name, base packages, and exposed ports |
-| `fs/system/` | First-boot users, Home Manager boot policy, and root-level services |
-| `fs/system/home-manager.nix` | Home Manager as a root-tree module: seeding, user trees, activation |
+| `fs/nix/system.nix` | Packages, system components, accounts, image name and ports |
+| `fs/nix/home-manager.nix` | Runtime Home Manager accounts and supervision services |
+| `lib/modules/home-manager/` | Build-only HM hooks, factory configuration placement and profiles |
 | `fs/hm-base/` | Home Manager defaults shared by every managed user |
 | `fs/hm-user/<name>/` | Initial packages and services for a declared user |
 | `fs/skel/.nixcfg/` | Initial Home Manager config for users added at runtime |
@@ -44,101 +45,93 @@ factory snapshot at `/opt/defaults`.
 
 ## Usage
 
-### Configure users and services
+### Compose the system
 
-Declare the initial users in [`fs/system/system.nix`](fs/system/system.nix).
-Each one is created on first boot with a fresh `/data` volume. This is not a
-fixed list of allowed users: standard Linux account tools can add, modify, and
-remove users at runtime.
+[`fs/nix/system.nix`](fs/nix/system.nix) is a SixOS-style overlay using
+upstream Infuse. It selects ordinary Nix components, whose contributions feed
+both the system generation and the OCI image:
 
 ```nix
-users = {
-  alice = {
-    uid = 1000;
-    homeManager.enable = true;
+{ infuse, ... }:
+final: prev:
+infuse prev {
+  components.local.__init = {
+    image.order = 10;
+    packages = [ final.pkgs.ripgrep final.pkgs.rsync ];
   };
-  bob.uid = 1001;
-};
+  components.home-manager.__init = final.callComponent ./home-manager.nix {
+    users = {
+      alice.uid = 1000;
+      bob = { uid = 1001; rebuildOnBoot = true; };
+    };
+    rebuildOnBoot = false;
+    activateOnBoot = true;
+  };
+  components.metrics.__init = {
+    packages = [ final.pkgs.python3 ];
+    services.metrics.process.argv = [
+      "${final.pkgs.python3}/bin/python" "-m" "http.server" "9100"
+    ];
+  };
+  image.exposedPorts.__append = [ 9100 ];
+}
 ```
 
-After initialization, the account database in `/data/etc` is authoritative.
-Changing the declarations affects new volumes; existing accounts are kept as
-they are.
+Components can contribute packages, users, groups, services, and image files
+and directories. Account hooks are baked into the image. Infuse overlays can override their
+constructor inputs or the resulting declarations. See the
+[composition contract](docs/COMPOSITION.md) for the complete API, layering,
+resource ownership, and update semantics.
 
-A user with `homeManager.enable` gets `~/.nixcfg` seeded from
-`fs/hm-user/<name>/` (or from `fs/skel/.nixcfg/` when there is no such
-directory), a supervised service tree, and Home Manager activation on boot.
-Services use the `nix-supervise` service schema:
+The wrapper realizes accounts and resources before starting dependent
+services. Home Manager contributes an account creation hook, a supervised user
+tree, activation, and optional prebuilt profiles in its own image layer.
+`rebuildOnBoot` includes activation; otherwise `activateOnBoot` activates an
+existing or factory profile, building once if neither exists. These defaults
+can be overridden per user. The build-only overlay in
+`lib/modules/home-manager` controls `buildProfiles` and factory configuration
+placement; `nix/default.nix` applies it after the system configuration.
+
+Users' Home Manager configurations still use ordinary Home Manager modules:
 
 ```nix
 { pkgs, ... }:
 {
   imports = [ (import ../../hm-base { }) ];
-
   home.packages = [ pkgs.python3 ];
-
   supervision.services.web.process.argv = [
-    "${pkgs.python3}/bin/python"
-    "-m"
-    "http.server"
-    "8080"
+    "${pkgs.python3}/bin/python" "-m" "http.server" "8080"
   ];
 }
 ```
 
-This profile installs Python for Alice and boots `web` in her supervised
-service tree. Changing the declaration later and running `refresh-system`
-updates the running tree.
+The image contains a factory generation. At boot, the root profile in
+`/nix/var/nix/profiles/system` is selected if available, otherwise the factory
+generation. Boot applies that saved generation without evaluating Nix. Run
+`refresh-system` as root to build and apply changes to the persistent
+`system.nix`; subsequent boots use the saved result.
 
-Home Manager boot behavior is configured in the same file, for all users or
-per user:
+Build failure and activation failure are different:
 
-```nix
-homeManager = {
-  rebuildOnBoot = true;
-  activateOnBoot = true;
-};
-users.bob.homeManager.rebuildOnBoot = false;
-```
-
-| Option | Meaning |
+| Failure | Result |
 | --- | --- |
-| `rebuildOnBoot` | Rebuild and activate the user's persistent `~/.nixcfg` on every boot. |
-| `activateOnBoot` | When `rebuildOnBoot` is off, activate the existing generation on boot. A user with no generation yet is built once. |
-| `buildProfiles` | Prebuild the generations of declared users that have an `fs/hm-user/<name>/home.nix` into the image, so first boot activates without building. Users added later are built on first activation. |
+| Root evaluation/build | Refresh returns failure without changing the profile or live system. |
+| Root application | Returns failure; the new root profile stays selected. Services and resources may be partially changed; there is no automatic rollback. Resource failure prevents its dependent services from starting. |
+| HM evaluation/build | Existing profile and home remain untouched. With HM `rebuildOnBoot = true`, the apply oneshot fails without activating the old profile, so user services may remain down on a fresh boot. |
+| HM activation | Checks such as file-collision detection run before the write boundary. After that boundary, the profile may already select the new generation and files, packages or services may be partially changed. There is no automatic rollback. |
 
-Rebuilding includes activation, so `activateOnBoot` has no effect while
-`rebuildOnBoot` is enabled.
+These are retryable, non-transactional activations. Retaining the selected service
+set after an activation failure avoids removing unrelated services through a
+factory fallback. Fix the configuration or resource conflict and run
+`refresh-system` again. Old generations remain available for deliberate recovery;
+switching a profile alone does not undo mutable data changes or apply services.
+For HM boot availability without evaluating configuration, use `rebuildOnBoot =
+false; activateOnBoot = true;` (the template defaults).
 
-### Configure the root supervision tree
-
-Everything above PID 1 is a service in one root `nix-supervise` tree. The base
-provides the Nix daemon and an account for each declared user. Importing
-`fs/system/home-manager.nix`, as the template does, expands each user
-with Home Manager enabled into a oneshot that seeds the home, a longrun for
-the user's own supervision tree, and a oneshot that activates the user's Home
-Manager generation. The tree's contents come from a Nix generation, not from
-the image, so root can change them at runtime.
-
-`fs/system/system.nix` also declares additional root-level services. They use
-the same service schema as user services and may select an execution user:
-
-```nix
-{ pkgs, ... }:
-{
-  supervision.system.services.metrics = {
-    process.argv = [ "${pkgs.python3}/bin/python" "-m" "http.server" "9100" ];
-    s6.execution.user = "nobody";
-  };
-}
-```
-
-The image bakes a factory generation from this file. At boot, the root profile
-in `/nix/var/nix/profiles/system` is applied when it exists, otherwise the
-factory generation. Boot never evaluates Nix for the root tree; the profile
-changes only when root runs `refresh-system`. Users added to the persistent
-copy of this file at runtime are created and seeded exactly like first-boot
-ones.
+Existing configurations using the old `imports`, `users`, and `homeManager`
+module interface must be converted to the overlay form above before refreshing
+with this version. Existing accounts can be adopted when their declared UID
+and GID match; specify `gid` when it differs from the UID.
 
 ### Build and run
 
@@ -173,17 +166,18 @@ Adding a managed user at runtime is the same declaration as at build time,
 made in the persistent system configuration and applied by root:
 
 ```sh
-$EDITOR /data/system/nixcfg/system.nix   # users.carol = { uid = 1002; homeManager.enable = true; };
+$EDITOR /data/system/nixcfg/system.nix   # add users.carol.uid = 1002 to the Home Manager constructor
 refresh-system
 ```
 
 The rebuilt root generation creates the account, seeds `~/.nixcfg` from
 `/opt/defaults/skel/.nixcfg`, starts the user's supervision tree, and
 activates Home Manager. Removing the declaration and refreshing stops the tree
-and its services; the account and home stay until removed with `userdel`,
-which also stops the tree. Accounts created with plain `useradd` remain
-ordinary Linux users, and a declared account that is deleted by hand is
-recreated on the next boot.
+and its services and removes its declared account, while retaining the home
+data. Passwords survive updates, but deleting an account removes its password;
+recreating it starts with a locked password. Accounts created with plain `useradd` remain unmanaged.
+Declared accounts are reconciled on the next resource application; UID/GID
+mismatches fail explicitly instead of silently retaining a different identity.
 
 Each managed user's live configuration is stored in `~/.nixcfg`. The user can
 change packages, settings, and `supervision.services`, then apply the result:
@@ -202,7 +196,8 @@ Use `reset-system` to restore the factory configuration from `/opt/defaults`.
 Root uses the same two commands for the root tree. Editing
 `/data/system/nixcfg/system.nix` and running `refresh-system` as root builds a
 new generation, records it in the root profile, and updates the live tree
-without restarting unaffected services. Bumping the pins under
+using the supervision transition machinery. Resource changes currently restart
+dependent services; a services-only edit retains the normal selective updates. Bumping the pins under
 `/opt/app/hm-base/npins` and refreshing replaces the supervision toolchain the
 same way: the new generation's s6 governs every user tree from its next start,
 while PID 1 itself changes only with the image.
@@ -219,4 +214,4 @@ tree, including which Home Manager activations completed.
 | `/nix-base` | Read-only image seed used to initialize an empty `/nix` |
 | `/opt/defaults` | Read-only factory configuration from `fs/` |
 | `/opt/app` | Per-container working tree; user and system configs link into `/data` |
-| `/run` | Disposable sockets and live S6 state |
+| `/run` | Disposable sockets, live S6 state, and the selected `/run/current-system` resource tree |

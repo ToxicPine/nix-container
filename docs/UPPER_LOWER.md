@@ -37,13 +37,14 @@ lower store need not be downloaded or copied into each container's upper.
 
 If the host store contains the packages required by the Home Manager profiles,
 the image does not need to embed those profile closures. Disable profile builds
-in `fs/system/system.nix`:
+in the build-only HM overlay, selected by `nix/default.nix`:
 
 ```nix
-homeManager.buildProfiles = false;
+import ../lib/modules/home-manager { buildProfiles = false; }
 ```
 
-Profiles are then built when the container boots. Their generations remain
+When activation is enabled, a missing profile is built when the container boots.
+Its generations remain
 private, while package paths can come from the shared lower store. Pre-populate
 and retain the desired packages in the host store: paths fetched by one
 container enter only its private upper store.

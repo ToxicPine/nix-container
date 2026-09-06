@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+# PID 1 and the root scan are running. Wait for the root tree, then apply the
+# saved generation. PID 1 remains responsible for the container lifetime.
+runtime_directory="/run/nix-supervise/system"
+profile="/nix/var/nix/profiles/system"
+factory_generation="/opt/defaults/system-generation"
+environment_dump="/run/s6-linux-init-env"
+
+log() {
+  printf 'rc.init: %s\n' "$*" >&2
+}
+
+if ! nix-supervise-tree-wait "${runtime_directory}" 30000; then
+  log "root supervision tree did not become ready"
+  exit 1
+fi
+
+# User activation also reads the initial container environment saved by PID 1.
+if [ -d "${environment_dump}" ]; then
+  chmod 0755 "${environment_dump}"
+fi
+
+if [ -x "${profile}/bin/apply" ]; then
+  selected_generation=$(readlink -f -- "${profile}")
+else
+  selected_generation=${factory_generation}
+fi
+
+if [ ! -x "${selected_generation}/bin/apply" ]; then
+  log "no supervision generation is available"
+  exit 1
+fi
+
+# An apply can make partial progress. Report failure without replacing the
+# selected service set with factory defaults.
+log "applying generation ${selected_generation}"
+if s6-envdir -I -f "${environment_dump}" "${selected_generation}/bin/apply"; then
+  exit 0
+else
+  apply_status=$?
+  log "generation failed to apply; retaining the selected service set"
+  exit "${apply_status}"
+fi

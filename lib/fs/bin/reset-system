@@ -45,7 +45,7 @@ if [[ "${user}" = "root" ]]; then
   fi
 
   system_config_dir="${DATA}/system/nixcfg"
-  factory="${DEFAULTS}/system"
+  factory="${DEFAULTS}/nix"
   if [[ ! -d "${factory}" ]]; then
     echo "${command_name}: no default system config found at ${factory}" >&2
     exit 1
@@ -59,8 +59,8 @@ if [[ "${user}" = "root" ]]; then
   rm -rf "${system_config_dir}"
   mv "${tmp}" "${system_config_dir}"
   trap - EXIT
-  rm -rf "${APP}/system"
-  ln -snf "${system_config_dir}" "${APP}/system"
+  rm -rf "${APP}/nix"
+  ln -snf "${system_config_dir}" "${APP}/nix"
 
   echo "Reset ${system_config_dir} from ${factory}"
   if [[ "${refresh}" = "1" ]]; then

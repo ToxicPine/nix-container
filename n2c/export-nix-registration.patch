@@ -1,0 +1,95 @@
+Subject: [PATCH] Expose Nix store registration without constructing a database
+
+diff --git a/default.nix b/default.nix
+--- a/default.nix
++++ b/default.nix
+@@ -309,6 +309,17 @@
+     out = l.traceIf debug ("buildLayer " + layersJSON + ": " + l.concatStringsSep " " nestedLayers) layersJSON;
+   in checked { inherit copyToRoot contents; } (out // {inherit nestedLayers;});
+ 
++  # Serialize closure metadata without opening a Nix store. A caller may select
++  # an exact inventory; unknown paths are errors rather than silently omitted.
++  makeNixRegistration = { closureGraphJson, storePaths ? null }:
++    assert l.isDerivation closureGraphJson;
++    pkgs.runCommand "nix-store-registration" { nativeBuildInputs = [ pkgs.jq ]; } ''
++      jq -r \
++        ${if storePaths == null then "--argjson storePaths null"
++          else "--rawfile storePaths ${l.escapeShellArg (toString storePaths)}"} \
++        -f ${./nix-registration.jq} ${closureGraphJson} > "''${out}"
++    '';
++
+   # Create a nix database from all paths contained in the given closureGraphJson.
+   # Also makes all these paths store roots to prevent them from being garbage collected.
+   makeNixDatabase = nixStorePrefix: closureGraphJson:
+@@ -318,11 +329,8 @@
+     } ''
+       echo "Generating the nix database from ${closureGraphJson}..."
+ 
+-      # Avoid including the closureGraph derivation itself.
+-      # Transformation taken from https://github.com/NixOS/nixpkgs/blob/c22ce64ccddc6d59cb3747827d0417f8c10bd9cf/pkgs/build-support/closure-info.nix#L70
+-      jq -r 'map([.path, .narHash, .narSize, "", (.references | length)] + .references) | add | map("\(.)\n") | add' ${closureGraphJson} |
+-        head -n -1 |
+-        NIX_REMOTE="local?root=$PWD" nix-store --load-db -j 1
++      NIX_REMOTE="local?root=''${PWD}" nix-store --load-db -j 1 \
++        < ${makeNixRegistration { inherit closureGraphJson; }}
+ 
+       # Sanitize time stamps
+       sqlite3 $PWD/nix/var/nix/db/db.sqlite 'UPDATE ValidPaths SET registrationTime = 0'
+@@ -416,10 +424,11 @@
+       nestedLayers = l.concatMap (l: l.nestedLayers) layers;
+       allLayers = nestedLayers ++ layers;
+ 
+-      nixDatabase = let
+-        ignore = [configFile]++allLayers;
+-        closureGraphForAllLayers = closureGraph ([configFile] ++ copyToRootList ++ allLayers) ignore;
+-      in makeNixDatabase validatedNixStorePrefix closureGraphForAllLayers;
++      closureGraphForAllLayers =
++        closureGraph ([configFile] ++ copyToRootList ++ allLayers) ([configFile] ++ allLayers);
++      nixDatabase = makeNixDatabase validatedNixStorePrefix closureGraphForAllLayers;
++      exportNixRegistration = { storePaths ? null }:
++        makeNixRegistration { closureGraphJson = closureGraphForAllLayers; inherit storePaths; };
+ 
+       perms' = perms ++ l.optional initializeNixDatabase
+         {
+@@ -453,7 +462,7 @@
+       image = pkgs.runCommandLocal "image-${baseNameOf name}.json" {
+         inherit meta;
+         passthru = {
+-          inherit fromImage imageName imageTag;
++          inherit fromImage imageName imageTag exportNixRegistration;
+           # provide a cheap to evaluate image reference for use with external tools like docker
+           # DO NOT use as an input to other derivations, as there is no guarantee that the image
+           # reference will exist in the store.
+diff --git a/nix-registration.jq b/nix-registration.jq
+--- /dev/null
++++ b/nix-registration.jq
+@@ -0,0 +1,12 @@
++# Selection happens before the existing closure-info registration serialization.
++# With no selection, retain the complete closure used by initializeNixDatabase.
++(if $storePaths == null then . else
++  ($storePaths | split("\n") | map(select(length > 0)) | unique) as $wanted
++  | INDEX(.[]; .path) as $metadata
++  | [$wanted[] | . as $path
++     | $metadata[$path] // error("registration metadata missing for " + $path)]
++end)
++# Same fields/order as nixpkgs closureInfo and n2c's original makeNixDatabase.
++# Streaming records also handles an empty closure without emitting "null".
++| .[]
++| ([.path, .narHash, .narSize, "", (.references | length)] + .references)[]
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -128,6 +128,13 @@
+     useful to isolate store paths that are often updated from more
+     stable store paths, to speed up build and push time.
+ 
++
++The image result also exposes `exportNixRegistration { storePaths ? null; }`.
++It returns a registration file suitable for `nix-store --load-db`, generated
++from the same closure metadata as `initializeNixDatabase`, without creating a
++SQLite database. By default it exports the entire closure; pass a file of
++newline-separated store paths to select an exact inventory. Missing metadata
++is an error. This export is lazy and is not added to the image automatically.
+ 
+ ### `nix2container.pullImage`
+ 

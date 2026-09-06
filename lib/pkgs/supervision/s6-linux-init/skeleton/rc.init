@@ -1,7 +1,0 @@
-#!/bin/sh
-set -eu
-
-# PID 1 and the root scan are ready. Select and apply the supervision
-# generation; PID 1 remains responsible for the container lifetime after this
-# hook returns.
-exec s6-envdir -I -f /run/s6-linux-init-env system-image-boot "$@"

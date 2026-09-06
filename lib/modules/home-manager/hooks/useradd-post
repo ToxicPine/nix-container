@@ -1,0 +1,45 @@
+#!@runtimeShell@
+# shellcheck shell=sh
+set -eu
+umask 022
+PATH='@coreutils@/bin:@findutils@/bin:@gawk@/bin'
+export PATH
+
+: "${SUBJECT:?useradd did not provide SUBJECT}"
+# Only conventional persistent homes participate in Home Manager setup.
+home_dir="$(awk -F: -v user="${SUBJECT}" '$1 == user { print $6; exit }' /data/etc/passwd)"
+if test "${home_dir}" != "/home/${SUBJECT}"; then
+  exit 0
+fi
+# Preserve useradd -M: HM setup requires an existing home.
+if test ! -d "${home_dir}"; then
+  exit 0
+fi
+config_dir="${home_dir}/.nixcfg"
+if test -L "${home_dir}" || test -L "${config_dir}"; then
+  echo "home-manager useradd hook: refusing symlinked home or configuration for ${SUBJECT}" >&2
+  exit 1
+fi
+
+# Initialize once. Recreating an account must preserve its retained config.
+config_entry=""
+if test -d "${config_dir}"; then
+  config_entry="$(find "${config_dir}" -mindepth 1 -maxdepth 1 -print -quit)"
+fi
+if test ! -d "${config_dir}" || test -z "${config_entry}"; then
+  seed_dir="/opt/defaults/hm-user/${SUBJECT}"
+  if test ! -d "${seed_dir}"; then
+    seed_dir=/opt/defaults/skel/.nixcfg
+  fi
+  mkdir -p "${config_dir}"
+  cp -R "${seed_dir}/." "${config_dir}/"
+  user_id="$(id -u "${SUBJECT}")"
+  group_id="$(id -g "${SUBJECT}")"
+  chown -R "${user_id}:${group_id}" "${config_dir}"
+  chmod -R u+rwX "${config_dir}"
+fi
+
+if test -f "${config_dir}/home.nix"; then
+  mkdir -p /opt/app/hm-user
+  ln -sfnT "${config_dir}" "/opt/app/hm-user/${SUBJECT}"
+fi

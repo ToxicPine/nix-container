@@ -8,7 +8,7 @@ import unittest
 
 
 BOOT_SCRIPT = (
-    Path(__file__).resolve().parents[1] / "lib/pkgs/supervision/boot/boot.sh"
+    Path(__file__).resolve().parents[1] / "lib/packages/supervision/s6-linux-init/skeleton/rc.init"
 )
 
 
@@ -23,7 +23,14 @@ class BootGenerationTests(unittest.TestCase):
         self.tools = self.root / "tools"
         self.tools.mkdir()
         self.write_executable(self.tools / "nix-supervise-tree-wait", "exit 0")
-
+        # Verify that generation application still goes through s6-envdir.
+        self.write_executable(self.tools / "s6-envdir", '''
+[[ $1 == -I && $2 == -f && $3 == "$BOOT_TEST_ENVIRONMENT" ]] || exit 99
+shift 3
+exec "$@"
+''')
+        self.environment = self.root / "environment"
+        self.environment.mkdir(mode=0o700)
         # Relocate only the image's fixed paths; execute the production script.
         source = BOOT_SCRIPT.read_text()
         for name, original, replacement in [
@@ -35,7 +42,7 @@ class BootGenerationTests(unittest.TestCase):
             declaration = f'{name}="{original}"'
             self.assertEqual(source.count(declaration), 1)
             source = source.replace(declaration, f'{name}="{replacement}"')
-        self.script = self.root / "boot.sh"
+        self.script = self.root / "rc.init"
         self.script.write_text(source)
 
     @staticmethod
@@ -52,11 +59,12 @@ class BootGenerationTests(unittest.TestCase):
 
     def run_boot(self):
         return subprocess.run(
-            ["bash", str(self.script)],
+            ["sh", str(self.script)],
             env={
                 **os.environ,
                 "PATH": f"{self.tools}:{os.environ['PATH']}",
                 "BOOT_TEST_CALLS": str(self.calls),
+                "BOOT_TEST_ENVIRONMENT": str(self.environment),
             },
             capture_output=True,
             text=True,
@@ -71,6 +79,7 @@ class BootGenerationTests(unittest.TestCase):
         result = self.run_boot()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls.read_text(), "selected\n")
+        self.assertEqual(self.environment.stat().st_mode & 0o777, 0o755)
 
     def test_failed_selected_transition_never_applies_factory(self):
         selected = self.root / "selected"

@@ -1,6 +1,10 @@
 {
   system ? "x86_64-linux",
   sources ? import ../fs/hm-base/npins,
+  overlays ? [
+    ../fs/nix/system.nix
+    (import ../lib/modules/home-manager { })
+  ],
 }:
 
 let
@@ -9,17 +13,13 @@ let
     config.allowUnfree = true;
     overlays = [ (import ../fs/overlay.nix) ];
   };
-  n2c = import ../n2c { inherit pkgs; };
+  # Ordered system overlays produce the factory generation and image defaults.
+  # The template uses fs/nix/system.nix, also evaluated by runtime refresh.
+  initialSystem = import ../lib/fs/nix-base {
+    inherit pkgs sources overlays;
+  };
 in
 import ../lib/image.nix {
-  inherit n2c pkgs sources;
-  image = import ./image.nix { inherit pkgs; };
-  # The root supervision tree, declared in fs/system/system.nix. This
-  # evaluation yields the image's factory generation and whatever factory
-  # defaults the configuration asks the image to carry; refresh-system
-  # re-evaluates the same file at runtime.
-  rootTree = import ../lib/fs/system-base {
-    inherit pkgs sources;
-    modules = [ ../fs/system/system.nix ];
-  };
+  inherit initialSystem;
+  inherit (initialSystem) pkgs sources;
 }
