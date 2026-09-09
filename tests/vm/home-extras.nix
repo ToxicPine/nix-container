@@ -1,6 +1,7 @@
 # A user's runtime edit: one package and one supervised service.
 { pkgs, ... }:
 {
+  supervision.services.web.s6.restartOnChange = true;
   home.packages = [ pkgs.hello ];
   supervision.services.web.process.argv = [
     "${pkgs.python3}/bin/python"

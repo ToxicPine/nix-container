@@ -151,10 +151,11 @@ arguments to create Carol's account, seed her configuration, and start her user
 services.
 
 Refresh builds a generation, records it in `/nix/var/nix/profiles/system`, and
-applies its accounts, packages, and services. Account or package changes also
-restart dependent services; changes to service definitions update the affected
-services. Boot applies the saved system generation, or the image's factory
-generation if none is available, without rebuilding the system configuration.
+reconciles accounts and selects packages before applying services. Account or
+package changes leave unrelated services running; changes to service definitions
+take effect on restart. Boot applies the saved system generation, or the image's
+factory generation if none is available, without rebuilding the system
+configuration.
 
 Each Home Manager user's live configuration is stored in `~/.nixcfg`. The user
 can change packages, settings, and `supervision.services`, then apply the
@@ -166,10 +167,11 @@ refresh-system
 ```
 
 Home Manager builds the new generation and `nix-supervise` reconciles its
-services. Adding, removing, or changing a service declaration starts, stops, or
-updates the corresponding supervised process without rebuilding the image.
-Services default to `s6.restartOnChange = true`; set it to `false` to defer a
-changed definition until the service next starts.
+services. Adding or removing a service declaration starts or stops the
+corresponding supervised process without rebuilding the image. Services default
+to `s6.restartOnChange = false`; set it to `true` to restart a service when its
+definition changes on refresh. Otherwise, changes take effect when it next
+starts.
 
 Use `reset-system` to restore and apply the factory configuration from
 `/opt/defaults`. Run as root, it resets the system configuration; run as a

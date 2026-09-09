@@ -99,15 +99,17 @@ startup or provisioning code.
 
 Root refresh builds, selects and applies a generation in
 `/nix/var/nix/profiles/system`. Account reconciliation then selects its package
-environment through `/run/current-system`. Boot applies the saved root generation,
-or the factory generation if no usable profile exists, without evaluating Nix.
+environment through `/run/current-system`, before services are applied. Boot
+applies the saved root generation, or the factory generation if no usable
+profile exists, without evaluating Nix.
 A failed apply never falls back to another generation.
 
-System and Home Manager services default to **`s6.restartOnChange = true`**:
-refresh restarts a service when its rendered definition or selected environment
-changes. Set it to `false` per service to defer changes until the service next
-starts. Unchanged services keep running. Package or account changes also restart
-services depending on `system-resources`; the base Nix daemon stays up.
+System and Home Manager services default to **`s6.restartOnChange = false`**.
+Set it to `true` per service to restart on refresh when its rendered definition
+or selected environment changes. Otherwise, changes take effect when it next
+starts. Account and package changes leave unrelated services running. Before
+removing an account, reconciliation stops system services using it and the
+Home Manager userdel hook stops its user tree.
 
 Keep `/nix` and `/data` across container replacement to retain generations,
 configuration, accounts and homes. Image contents do not overwrite existing
@@ -143,8 +145,8 @@ HM boot activation and rebuilding are controlled by `activateOnBoot` and
 
 Executable account hooks belong in `image.files` under `/etc/shadow-maint`.
 Changing hooks requires container replacement; runtime refresh uses the installed
-hooks. During reconciliation, `SYSTEM_RESOURCES_APPLY=1` tells HM's userdel hook
-that supervision already handled stopping dependent services.
+hooks. Reconciliation runs before service activation, so the userdel hook can
+stop the user's tree without re-entering an active s6 transition.
 
 ### Failures
 

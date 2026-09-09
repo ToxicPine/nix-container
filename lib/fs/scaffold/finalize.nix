@@ -39,10 +39,6 @@ let
     ignoreCollisions = false;
   };
   declaredServices = collect "services";
-  # The base component's services need only the bootstrap identities created
-  # by the entrypoint. They stay up across resource changes, so a refresh does
-  # not restart the daemon that user activations are building through.
-  prerequisiteServices = lib.attrNames (components.base.services or { });
   accounts = import ./accounts.nix {
     inherit pkgs schema sw;
     users = collect "users";
@@ -53,47 +49,69 @@ let
     inherit pkgs;
     modules = [
       {
-        options.supervision.system.services = lib.mkOption {
-          type = lib.types.attrsOf (
-            lib.types.submoduleWith {
-              modules = [ { config.s6.restartOnChange = lib.mkDefault true; } ];
-            }
-          );
-        };
         config.supervision.system = {
           tree.runtimeDirectory = "/run/nix-supervise/system";
           stateDirectory = "/data/system/supervision";
           producer = "system-image";
-          # Stop dependent services before account changes; start them only
-          # after reconciliation succeeds and the package environment is set.
-          services = {
-            system-resources = accounts.service;
-          }
-          // lib.mapAttrs (
-            name: service:
-            if builtins.elem name prerequisiteServices then
-              service
-            else
-              lib.recursiveUpdate service {
-                s6.dependencies.system-resources = { };
-              }
-          ) declaredServices;
+          services = declaredServices;
         };
       }
     ];
   };
   cfg = evaluated.config.supervision.system;
+  # Record execution identities alongside the supervisor's service metadata.
+  # Reconciliation uses the currently applied manifest to stop services before
+  # removing their users or groups, including services nested in namespaces.
+  serviceAccounts =
+    services:
+    lib.concatMapAttrs (
+      _: service:
+      lib.optionalAttrs (service.process.argv != [ ]) {
+        ${service.s6.runtimeName} = {
+          inherit (service.s6.execution) user group;
+        };
+      }
+      // serviceAccounts service.services
+    ) services;
+  executionAccounts = pkgs.writeText "system-service-accounts.json" (
+    builtins.toJSON (serviceAccounts cfg.services)
+  );
+  serviceBundle = pkgs.runCommand "system-service-bundle" { nativeBuildInputs = [ pkgs.jq ]; } ''
+    mkdir -p "$out"
+    cp -a ${cfg.serviceBundle}/. "$out/"
+    chmod u+w "$out/manifest.json"
+    # Keep the selected package environment in the applied bundle's GC root.
+    jq --slurpfile accounts ${executionAccounts} --arg resources ${resources} \
+      '.systemResources = $resources | .services |= with_entries(.value.execution = $accounts[0][.key])' \
+      ${cfg.serviceBundle}/manifest.json > "$out/manifest.json"
+  '';
+  supervisionPackages = pkgs.callPackages "${sources.nix-supervise}/pkgs" { };
+  apply = pkgs.writeShellApplication {
+    name = "system-image-apply";
+    runtimeInputs = [
+      supervisionPackages.s6
+      supervisionPackages.applyProgram
+    ];
+    text = ''
+      # Serialize reconciliation and service activation together. The service
+      # apply command uses the same lock, so tell it this process holds it.
+      if [[ "''${SYSTEM_IMAGE_APPLY_LOCKED:-}" != 1 ]]; then
+        exec s6-setlock -w /run/nix-supervise/system/apply.lock \
+          env SYSTEM_IMAGE_APPLY_LOCKED=1 "$0" "$@"
+      fi
+      ${accounts.reconcileAccounts}/bin/system-reconcile-accounts ${resources}
+      exec env NIX_SUPERVISE_APPLY_LOCKED=1 nix-supervise-apply \
+        ${serviceBundle} /run/nix-supervise/system /data/system/supervision
+    '';
+  };
   generation = pkgs.runCommand "system-image-generation" { } ''
     mkdir -p "$out/bin"
-    ln -s ${cfg.applyPackage}/bin/nix-supervise-system-apply-current "$out/bin/apply"
-    ln -s ${cfg.serviceBundle} "$out/service-bundle"
+    ln -s ${apply}/bin/system-image-apply "$out/bin/apply"
+    ln -s ${serviceBundle} "$out/service-bundle"
     ln -s ${resources} "$out/resources"
     ln -s ${sw} "$out/sw"
   '';
 in
-assert check (
-  !(declaredServices ? system-resources)
-) "system-resources is reserved by the wrapper" true;
 assert builtins.seq accounts true;
 {
   inherit

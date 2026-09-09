@@ -66,6 +66,17 @@ let
             packages = [ pkgs.hello ];
             users.demo.uid = 1234;
             services.demo.process.argv = [ "${pkgs.hello}/bin/hello" ];
+            services.automatic = {
+              process.argv = [ "${pkgs.hello}/bin/hello" ];
+              s6.restartOnChange = true;
+            };
+            services.nested.services = {
+              default.process.argv = [ "${pkgs.hello}/bin/hello" ];
+              automatic = {
+                process.argv = [ "${pkgs.hello}/bin/hello" ];
+                s6.restartOnChange = true;
+              };
+            };
             services.manual = {
               process.argv = [ "${pkgs.hello}/bin/hello" ];
               s6.restartOnChange = false;
@@ -116,10 +127,14 @@ assert
 assert example.users.demo.uid == 1234;
 assert example.groups.demo.gid == 1234;
 assert example.components.demo.image.files ? "/etc/shadow-maint/useradd-post.d/60-demo";
-assert example.config.supervision.system.services.demo.s6.dependencies ? system-resources;
+assert !(example.config.supervision.system.services.demo.s6.dependencies ? system-resources);
+assert example.config.supervision.system.services.nested.services.default.s6.dependencies == { };
 assert !(example.config.supervision.system.services.nix-daemon.s6.dependencies ? system-resources);
-assert example.config.supervision.system.services.system-resources.s6.restartOnChange;
-assert example.config.supervision.system.services.demo.s6.restartOnChange;
+assert !(example.config.supervision.system.services ? system-resources);
+assert !example.config.supervision.system.services.demo.s6.restartOnChange;
+assert example.config.supervision.system.services.automatic.s6.restartOnChange;
+assert !example.config.supervision.system.services.nested.services.default.s6.restartOnChange;
+assert example.config.supervision.system.services.nested.services.automatic.s6.restartOnChange;
 assert !example.config.supervision.system.services.manual.s6.restartOnChange;
 assert lazyImage.generation.drvPath == base.generation.drvPath;
 assert !(disabled.components ? off);
@@ -170,9 +185,6 @@ assert fails (
 # Runtime file management and generic seeding are intentionally unsupported.
 assert fails (_: _final: _prev: { components.bad.files = { }; });
 assert fails (_: _final: _prev: { components.bad.seeds = { }; });
-assert fails (
-  _: _final: _prev: { components.bad.services.system-resources.process.argv = [ "/bin/true" ]; }
-);
 assert fails (
   _: _final: _prev: {
     components.bad.services.demo = {

@@ -47,7 +47,18 @@ let
         home.username = "alice";
         home.homeDirectory = "/home/alice";
         supervision.services = {
-          automatic.process.argv = [ "${pkgs.hello}/bin/hello" ];
+          automatic = {
+            process.argv = [ "${pkgs.hello}/bin/hello" ];
+            s6.restartOnChange = true;
+          };
+          default.process.argv = [ "${pkgs.hello}/bin/hello" ];
+          nested.services = {
+            default.process.argv = [ "${pkgs.hello}/bin/hello" ];
+            automatic = {
+              process.argv = [ "${pkgs.hello}/bin/hello" ];
+              s6.restartOnChange = true;
+            };
+          };
           manual = {
             process.argv = [ "${pkgs.hello}/bin/hello" ];
             s6.restartOnChange = false;
@@ -57,6 +68,9 @@ let
     ];
   };
 in
+assert !home.config.supervision.services.default.s6.restartOnChange;
+assert !home.config.supervision.services.nested.services.default.s6.restartOnChange;
+assert home.config.supervision.services.nested.services.automatic.s6.restartOnChange;
 assert home.config.supervision.services.automatic.s6.restartOnChange;
 assert !home.config.supervision.services.manual.s6.restartOnChange;
 assert disabled.generation.drvPath == base.generation.drvPath;
@@ -67,7 +81,7 @@ assert !(hm ? files);
 assert !(hm ? seeds);
 assert !(hm.image.trees ? "/opt/defaults/skel/.nixcfg");
 assert !(hm.services ? home-alice);
-assert enabled.config.supervision.system.services.tree-alice.s6.dependencies ? system-resources;
+assert enabled.config.supervision.system.services.tree-alice.s6.dependencies == { };
 pkgs.runCommand "home-manager-hook-tests" { } ''
   test -x ${addHook}
   test -x ${hm.image.files."/etc/shadow-maint/userdel-pre.d/50-home-manager-services"}

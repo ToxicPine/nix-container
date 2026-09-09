@@ -25,11 +25,11 @@ The generation is produced by `lib/fs/scaffold`. It composes ordinary Nix
 components through Infuse overlays, then renders their services with
 nix-supervise's portable system-scope evaluator. `finalize.nix` fixes the root
 tree's paths and assembles the generation; `base.nix` contributes `nix-daemon`
-with socket readiness. `accounts.nix` prepares the `system-resources` oneshot
-to reconcile declared accounts and select the package environment. Every
-declared service outside the base component depends on it; `nix-daemon` stays
-up across resource changes. Resource changes restart dependent services;
-homes and other mutable state are retained.
+with socket readiness. The generation's apply command reconciles accounts and
+selects the package environment before applying services. There is no account
+setup service in the supervision tree. Before removing accounts, reconciliation
+stops system services using those identities; HM's userdel hook stops their
+user trees. Unrelated services keep running, and homes are retained.
 
 Home Manager is a component constructor in `fs/nix/home-manager.nix`. For
 each declared user it adds `tree-<name>` and `apply-<name>`, rendered by
@@ -62,13 +62,13 @@ available independently of the component.
 Users come from `fs/nix/system.nix` and nowhere else. The image build
 evaluates the repository copy into the factory generation; `refresh-system`
 as root evaluates the persistent copy in `/data/system/nixcfg`, so adding a
-user at runtime is the same declaration followed by a refresh, and the change
-goes live through `s6-rc-update` like everything else. The `userdel` hook
-stops the user's tree and removes its runtime directory; the account database
-is not consulted to decide
-what runs. The account reconciler removes every account the configuration
-does not declare, using `userdel`. The hook skips its service stop when
-`SYSTEM_RESOURCES_APPLY=1`, avoiding a nested s6 transition.
+user at runtime is the same declaration followed by a refresh. Accounts are
+reconciled before the new service set is applied through `s6-rc-update`. The
+`userdel` hook stops the user's tree and removes its runtime directory; the
+account database is not consulted to decide what runs. The account reconciler
+removes every account the configuration does not declare, using `userdel`.
+The hook runs before the service transition,
+so it can stop the user's tree through the existing live database.
 See `docs/SCAFFOLD.md` for the full scaffold and ownership contract.
 
 ## What is immutable

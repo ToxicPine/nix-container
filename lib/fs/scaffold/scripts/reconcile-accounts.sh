@@ -87,10 +87,29 @@ validate_accounts() {
 
 lookup_account() { REPLY=$(awk -F: -v name="$2" '$1 == name { print; exit }' "${account_dir}/$1"); }
 
+# Stop services using identities that are about to disappear. Home Manager's
+# userdel hook separately stops the user's supervised tree. At first boot
+# there is no live service manifest and nothing to stop.
+stop_removed_account_services() {
+    local live=/run/nix-supervise/system/live
+    local service_manifest=/run/nix-supervise/system/current-service-manifest.json
+    local selected
+    local -a services
+    [[ ${mode} == runtime && -f ${service_manifest} && -L ${live} ]] || return 0
+    selected=$(jq -r --argjson plan "${plan}" '
+        .services | to_entries[] |
+        select((.value.execution.user as $user | $plan.removedUsers | index($user)) != null
+            or (.value.execution.group as $group | $plan.removedGroups | index($group)) != null) |
+        .key' "${service_manifest}")
+    if [[ -n ${selected} ]]; then
+        mapfile -t services <<< "${selected}"
+        s6-rc -l "${live}" -d change "${services[@]}"
+    fi
+}
+
 reconcile_accounts() {
     # Pipefail propagates failures from both jq and Shadow; no process
     # substitutions or scratch files are needed to feed these loops.
-    export SYSTEM_RESOURCES_APPLY=1
     jq -r '.removedUsers[]' <<< "${plan}" |
         while IFS= read -r name; do
             lookup_account passwd "${name}"
@@ -153,5 +172,6 @@ publish_generation() {
 
 load_state
 validate_accounts
+stop_removed_account_services
 reconcile_accounts
 publish_generation

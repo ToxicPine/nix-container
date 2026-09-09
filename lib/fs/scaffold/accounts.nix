@@ -1,4 +1,4 @@
-# Prepare the account manifest and its application service. Shadow performs
+# Prepare the account manifest and reconciliation command. Shadow performs
 # the actual mutations; this layer adds private groups and checks consistency.
 {
   pkgs,
@@ -29,8 +29,6 @@ let
         }
       )
   ) explicitGroups (lib.attrNames users);
-  # Resource application is a dependency, so s6 stops dependent services before
-  # changing identities and starts them only after reconciliation succeeds.
   resourcesManifest = pkgs.writeText "system-resources.json" (
     builtins.toJSON {
       inherit baseline;
@@ -51,16 +49,6 @@ let
     }
   ];
   reconcileAccounts = import ./reconcile-accounts.nix { inherit pkgs; };
-  realization = {
-    process.argv = [
-      "${reconcileAccounts}/bin/system-reconcile-accounts"
-      "${resources}"
-    ];
-    s6 = {
-      type = "oneshot";
-      restartOnChange = true;
-    };
-  };
 in
 assert check (
   lib.intersectLists (lib.attrNames users) (lib.attrNames baseline.users) == [ ]
@@ -73,6 +61,10 @@ assert builtins.seq (schema.accounts {
   groups = baseline.groups // groups;
 }) true;
 {
-  inherit users groups resources;
-  service = realization;
+  inherit
+    users
+    groups
+    resources
+    reconcileAccounts
+    ;
 }

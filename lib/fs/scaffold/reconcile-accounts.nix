@@ -9,6 +9,7 @@ pkgs.writeShellApplication {
     pkgs.gawk
     pkgs.jq
     pkgs.util-linux
+    pkgs.s6-rc
   ];
   text = ''
     export PATH="''${PATH}:/run/current-system/sw/bin:/bin:/sbin:/usr/bin:/usr/sbin"

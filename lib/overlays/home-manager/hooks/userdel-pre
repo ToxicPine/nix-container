@@ -9,13 +9,6 @@ set -eu
 # same uid would otherwise inherit it.
 runtime_directory="/run/nix-supervise/users/$(@id@ -u "${SUBJECT}")"
 
-# Resource application runs inside an s6 transition after dependent services
-# have stopped. Re-entering s6-rc here would contend with that transition.
-if test "${SYSTEM_RESOURCES_APPLY:-}" = 1; then
-  @rm@ -rf "${runtime_directory}"
-  exit 0
-fi
-
 # Stop the user's supervision tree and its activation oneshot through the
 # root tree's live database. The runtime name comes from the manifest, which
 # records each service's declared option path.

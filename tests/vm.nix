@@ -40,12 +40,22 @@ let
             components.home-manager.__input.users.carol.__init = {
               uid = 1002;
             };
-            components.local.services.metrics.__init.process.argv = [
-              "${runtimePkgs.python3}/bin/python"
-              "-m"
-              "http.server"
-              port
-            ];
+            components.local.services.nested.__init.services.worker = {
+              process.argv = [
+                "${runtimePkgs.coreutils}/bin/sleep"
+                "infinity"
+              ];
+              s6.execution.user = "carol";
+            };
+            components.local.services.metrics.__init = {
+              s6.restartOnChange = true;
+              process.argv = [
+                "${runtimePkgs.python3}/bin/python"
+                "-m"
+                "http.server"
+                port
+              ];
+            };
           }
         )
       ];
@@ -96,6 +106,13 @@ pkgs.testers.runNixOSTest {
     def services():
         return sh("s6-rc -l /run/nix-supervise/system/live -a list")
 
+    def service_pid(option_path):
+        name = sh("jq -r --arg path " + shlex.quote(option_path) +
+                  " '.services | to_entries[] | select(.value.optionPath == $path) | .key' "
+                  "/run/nix-supervise/system/current-service-manifest.json").strip()
+        assert name, f"missing service {option_path}"
+        return sh(f"s6-svstat -o pid /run/nix-supervise/system/scan/{name}").strip()
+
     def wait_for_port(port):
         machine.wait_until_succeeds(
             f"podman exec sys bash -c 'exec 3<>/dev/tcp/127.0.0.1/{port}'", timeout=60
@@ -141,11 +158,21 @@ pkgs.testers.runNixOSTest {
         build_uid = int(sh(f"cat {result}"))
         assert build_uid in range(30001, 30011), f"build ran as uid {build_uid}"
 
-    with subtest("root refresh adds and activates a declared user"):
+    with subtest("root refresh adds accounts before services without restarting existing users"):
+        user_tree_pid = service_pid("tree-user")
         sh(r"sed -i 's|users.user.uid = 1000;|users.user.uid = 1000;\n    users.carol.uid = 1002;|' "
            "/data/system/nixcfg/system.nix")
         sh(r"sed -i '/# services.metrics.process.argv = /,+2 s/# //' /data/system/nixcfg/system.nix")
+        sh(r"sed -i '/services.metrics.process.argv = /i\    services.metrics.s6.restartOnChange = true;' "
+           "/data/system/nixcfg/system.nix")
+        sh(r"sed -i '/services.metrics.process.argv = /i\    services.nested.services.worker = { "
+           r'process.argv = [ "${runtimePkgs.coreutils}/bin/sleep" "infinity" ]; '
+           r's6.execution.user = "carol"; };' + "' /data/system/nixcfg/system.nix")
         sh("refresh-system")
+        assert service_pid("tree-user") == user_tree_pid
+        assert "system-resources" not in services()
+        worker_pid = service_pid("nested.worker")
+        assert sh(f"stat -c %u /proc/{worker_pid}").strip() == "1002"
         wait_for_port(9100)
         assert sh("id -u carol").strip() == "1002"
         assert "apply-carol" in services()
@@ -179,10 +206,14 @@ pkgs.testers.runNixOSTest {
         wait_for_port(9101)
         wait_for_port(8081)
 
-    with subtest("reset restores factory configuration and removes the added user"):
+    with subtest("reset stops removed-user services and retains unrelated user trees"):
+        user_tree_pid = service_pid("tree-user")
+        worker_pid = service_pid("nested.worker")
         sh("cd /data/system/nixcfg && reset-system")
         sh("cmp /data/system/nixcfg/system.nix /opt/defaults/nix/system.nix")
         assert "carol:" not in sh("cat /data/etc/passwd")
+        sh(f"test ! -e /proc/{worker_pid}")
+        assert service_pid("tree-user") == user_tree_pid
         sh("test -d /data/homes/carol && test ! -e /run/nix-supervise/users/1002")
         assert "carol" not in services()
         assert "apply-user" in services()
