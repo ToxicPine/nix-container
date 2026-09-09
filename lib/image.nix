@@ -63,13 +63,6 @@ let
 
   mutableConfigPrefix = "/opt/app";
   factorySettingsPrefix = "/opt/defaults";
-  # Per-user factory configurations belong to the Home Manager component.
-  # Keep the HM link namespace, but do not bake user directories into the
-  # generic template layer as well.
-  imageTemplate = lib.cleanSourceWith {
-    src = ../fs;
-    filter = path: type: !(type == "directory" && builtins.dirOf path == toString ../fs/hm-user);
-  };
   staticBootstrapBusybox = pkgs.pkgsStatic.busybox;
   staticBootstrapCoreutils = pkgs.pkgsStatic.coreutils;
   # Built from the unpatched package set: the account-data patches on
@@ -329,24 +322,16 @@ let
     # clobbers it: the same path in fs/ cannot replace image code.
     ${installTree {
       source = ./fs;
-      destination = mutableConfigPrefix;
-    }}
-    ${installTree {
-      source = imageTemplate;
-      destination = mutableConfigPrefix;
-      noClobber = true;
-    }}
-    ${installTree {
-      source = ./fs;
       destination = factorySettingsPrefix;
     }}
     ${installTree {
-      source = imageTemplate;
+      source = ../fs;
       destination = factorySettingsPrefix;
       noClobber = true;
     }}
 
     chmod -R a-w "$out${factorySettingsPrefix}"
+    ln -s /data/app "$out${mutableConfigPrefix}"
 
     mkdir -p "$out/data" "$out/root" "$out/tmp" "$out/var/empty"
     rm -rf "$out/home"

@@ -13,7 +13,7 @@ usage() {
 Usage: ${command_name} [--no-refresh]
 
 Reset the current user's ~/.nixcfg Home Manager config to factory defaults.
-As root, reset the system supervision config in /data/system/nixcfg instead.
+As root, reset the full working tree in /data/app instead.
 EOF
 }
 
@@ -44,23 +44,31 @@ if [[ "${user}" = "root" ]]; then
     exit 1
   fi
 
-  system_config_dir="${DATA}/system/nixcfg"
-  factory="${DEFAULTS}/nix"
+  system_config_dir="${DATA}/app"
+  factory="${DEFAULTS}"
   if [[ ! -d "${factory}" ]]; then
     echo "${command_name}: no default system config found at ${factory}" >&2
     exit 1
   fi
 
-  mkdir -p "${DATA}/system"
-  tmp="$(mktemp -d "${DATA}/system/.nixcfg-reset.XXXXXX")"
+  mkdir -p "${DATA}"
+  tmp="$(mktemp -d "${DATA}/.app-reset.XXXXXX")"
   trap 'rm -rf "${tmp}"' EXIT
   cp -R "${factory}/." "${tmp}/"
   chmod -R u+rwX "${tmp}"
+  chmod 0755 "${tmp}"
+  # User configurations are reset separately. Retain their links while
+  # restoring shared defaults, pins, tools, and system configuration.
+  for user_link in "${APP}/hm-user/"*; do
+    if [[ -L "${user_link}" ]]; then
+      mkdir -p "${tmp}/hm-user"
+      rm -rf "${tmp}/hm-user/${user_link##*/}"
+      cp -P "${user_link}" "${tmp}/hm-user/"
+    fi
+  done
   rm -rf "${system_config_dir}"
   mv "${tmp}" "${system_config_dir}"
   trap - EXIT
-  rm -rf "${APP}/nix"
-  ln -snf "${system_config_dir}" "${APP}/nix"
 
   echo "Reset ${system_config_dir} from ${factory}"
   if [[ "${refresh}" = "1" ]]; then

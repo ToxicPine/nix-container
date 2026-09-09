@@ -60,16 +60,17 @@ pkgs.runCommand "system-image-contract-tests"
     test -x ${image.componentFilesystems.home-manager}/etc/shadow-maint/userdel-pre.d/50-home-manager-services
     test -x ${image.componentFilesystems.home-manager}/etc/shadow-maint/userdel-post.d/50-home-manager
     test -f ${image.rootFilesystem}/opt/defaults/skel/.nixcfg/home.nix
-    # The HM link namespace survives removal of its old refresh expression.
-    test -d ${image.rootFilesystem}/opt/app/hm-user
-    test -x ${image.rootFilesystem}/opt/app/bin/refresh-system
-    test ! -e ${image.rootFilesystem}/opt/app/hm-user/refresh.nix
-    test ! -e ${image.rootFilesystem}/opt/app/scaffold/refresh.nix
-    # Build-only HM sources are absent from both installed configuration trees.
-    for prefix in app defaults; do
-      test ! -e ${image.rootFilesystem}/opt/"$prefix"/nix/scripts/hooks
-      test ! -e ${image.rootFilesystem}/opt/"$prefix"/overlays/home-manager
-      test -f ${image.rootFilesystem}/opt/"$prefix"/nix/home-manager.nix
-    done
+    # Factory configs use the normal template copy, not component layers or links.
+    test ! -e ${image.componentFilesystems.home-manager}/opt/defaults/hm-user
+    test -f ${image.rootFilesystem}/opt/defaults/hm-user/user/home.nix
+    test ! -L ${image.rootFilesystem}/opt/defaults/hm-user/user
+    test "$(readlink ${image.rootFilesystem}/opt/app)" = /data/app
+    test -x ${image.rootFilesystem}/opt/defaults/bin/refresh-system
+    test ! -e ${image.rootFilesystem}/opt/defaults/hm-user/refresh.nix
+    test ! -e ${image.rootFilesystem}/opt/defaults/scaffold/refresh.nix
+    # Build-only HM sources are absent from the factory configuration.
+    test ! -e ${image.rootFilesystem}/opt/defaults/nix/scripts/hooks
+    test ! -e ${image.rootFilesystem}/opt/defaults/overlays/home-manager
+    test -f ${image.rootFilesystem}/opt/defaults/nix/home-manager.nix
     touch "$out"
   ''

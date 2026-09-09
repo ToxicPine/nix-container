@@ -1,5 +1,5 @@
 # Runtime Home Manager component: account declarations and user supervision.
-# OCI hooks, factory configuration and profiles belong to lib/overlays/home-manager.
+# OCI hooks and prebuilt profiles belong to lib/overlays/home-manager.
 {
   pkgs,
   lib,

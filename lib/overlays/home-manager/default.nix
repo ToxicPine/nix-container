@@ -2,7 +2,6 @@
 # Configure image policy here, then supply the returned overlay to lib/fs/scaffold.
 {
   buildProfiles ? true,
-  factoryConfigDir ? ../../../fs/hm-user,
 }:
 {
   pkgs,
@@ -13,6 +12,7 @@
 }:
 final: prev:
 let
+  factoryConfigDir = ../../../fs/hm-user;
   nixSupervisePackages = pkgs.callPackages "${sources.nix-supervise}/pkgs" { };
   users = final.components.home-manager.users;
   hooks = pkgs.runCommand "home-manager-account-hooks" { } ''
@@ -57,15 +57,11 @@ let
       "/etc/shadow-maint/userdel-post.d/50-home-manager" = "${hooks}/userdel-post";
     };
     storePaths = lib.attrValues factoryGenerations;
-    trees =
-      lib.mapAttrs' (
-        name: _: lib.nameValuePair "/opt/defaults/hm-user/${name}" (factoryConfigDir + "/${name}")
-      ) (lib.filterAttrs (name: _: builtins.pathExists (factoryConfigDir + "/${name}")) users)
-      // lib.optionalAttrs (factoryGenerations != { }) {
-        "/opt/defaults/home-manager-generations" = pkgs.linkFarm "home-manager-factory-generations" (
-          lib.mapAttrsToList (name: path: { inherit name path; }) factoryGenerations
-        );
-      };
+    trees = lib.optionalAttrs (factoryGenerations != { }) {
+      "/opt/defaults/home-manager-generations" = pkgs.linkFarm "home-manager-factory-generations" (
+        lib.mapAttrsToList (name: path: { inherit name path; }) factoryGenerations
+      );
+    };
   };
 in
 if !(prev.components ? home-manager) || !(prev.components.home-manager.enable or true) then

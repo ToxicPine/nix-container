@@ -200,29 +200,20 @@ rm -rf \
   /run/nix-supervise \
   /run/service
 
-# Root's supervision configuration persists beside the user homes. Seed it
-# from the factory copy on first boot and anchor the shared tree link to it.
-# It is the input of the generation that provisions everything else, so it is
-# the one piece of configuration the entrypoint still seeds itself. The
-# generation reconciles user accounts; their creation hooks initialize homes.
-system_config_dir="${DATA_DIR}/system/nixcfg"
-mkdir -p "${system_config_dir}"
+# Seed the whole working tree once. Stage the copy so an interrupted first
+# boot cannot leave a partial tree that later boots mistake for initialized.
+# /opt/app is an image-owned link to this persistent directory.
+app_dir="${DATA_DIR}/app"
+mkdir -p "${DATA_DIR}/system"
 chmod 0700 "${DATA_DIR}/system"
-first_system_config_entry="$("${BUSYBOX}" find "${system_config_dir}" -mindepth 1 -maxdepth 1 -print -quit)"
-if test -z "${first_system_config_entry}"; then
-  cp -R /opt/defaults/nix/. "${system_config_dir}/"
-fi
-chmod -R u+rwX "${system_config_dir}"
-rm -rf /opt/app/nix
-ln -snf "${system_config_dir}" /opt/app/nix
-
-# Restore the image's HM links to configurations in surviving user homes.
-if test -d /opt/app/hm-user; then
-  while IFS=: read -r user_name _password _uid _gid _gecos home_dir _shell; do
-    if test "${home_dir}" = "/home/${user_name}" && test -f "${home_dir}/.nixcfg/home.nix"; then
-      ln -sfnT "${home_dir}/.nixcfg" "/opt/app/hm-user/${user_name}"
-    fi
-  done <"${ACCOUNT_DATA_DIR}/passwd"
+if test ! -e "${app_dir}"; then
+  staging_dir=$(mktemp -d "${DATA_DIR}/.app-seed.XXXXXX")
+  trap 'rm -rf "${staging_dir}"' EXIT
+  cp -R /opt/defaults/. "${staging_dir}/"
+  chmod -R u+rwX "${staging_dir}"
+  chmod 0755 "${staging_dir}"
+  mv "${staging_dir}" "${app_dir}"
+  trap - EXIT
 fi
 
 # exec preserves PID 1. S6 continues boot in rc.init after its root scan is

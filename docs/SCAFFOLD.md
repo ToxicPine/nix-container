@@ -1,7 +1,8 @@
 # System scaffold
 
 `fs/nix/system.nix` declares the packages, accounts, services and image settings
-for both image builds and runtime refresh. Start with the [template usage](../README.md#configure-the-system).
+for both image builds and runtime refresh. Start with the
+[template usage](../README.md#configure-the-system).
 
 ## Overlays and components
 
@@ -30,9 +31,9 @@ infuse prev {
 }
 ```
 
-`final.callComponent` supplies `pkgs`, `sources`, `lib` and `userRuntimeRoot`
-to a constructor and gives its result `.override` support. All components use
-the final package set. An additional overlay can modify inputs or results:
+`final.callComponent` supplies `pkgs`, `sources`, `lib` and `userRuntimeRoot` to
+a constructor and gives its result `.override` support. All components use the
+final package set. An additional overlay can modify inputs or results:
 
 ```nix
 { infuse, ... }:
@@ -43,12 +44,12 @@ infuse prev {
 }
 ```
 
-| Infuse operation | Effect |
-| --- | --- |
-| `__init` | Add a definition; fail if it already exists. |
-| `__assign` | Replace a value. |
-| `__append` | Extend a list. |
-| `__input` | Override constructor arguments and recompute its result. |
+| Infuse operation | Effect                                                   |
+| ---------------- | -------------------------------------------------------- |
+| `__init`         | Add a definition; fail if it already exists.             |
+| `__assign`       | Replace a value.                                         |
+| `__append`       | Extend a list.                                           |
+| `__input`        | Override constructor arguments and recompute its result. |
 
 Apply constructor input changes before direct result edits: a later input
 override replaces those edits. Plain Nix overlays merge shallowly, so returning
@@ -70,83 +71,92 @@ Unknown top-level, component, account and image fields are rejected. Disabled
 components do not evaluate their declarations; runtime evaluation leaves
 image-only contributions lazy.
 
-| Field | Contract |
-| --- | --- |
-| `enable` | Set to `false` to omit the component. |
-| `packages` | Packages added to the generation's `sw` environment and PATH. Conflicting paths fail the build. |
-| `users` | Named accounts with required `uid`; optional `gid` (defaults to UID), `shell`, `description`, `extraGroups`. Homes are `/home/<name>`, backed by `/data/homes/<name>`. |
-| `groups` | Named groups with required `gid` and optional `members`. Each user also gets a same-named private group; supplementary groups must be declared. |
-| `services` | Named nix-supervise system services. Use store paths for executables. |
-| `image.storePaths` | Extra store sources carried by the image without adding programs to PATH. |
-| `image.files` | Absolute destinations mapped to source files. Executable modes are preserved. |
-| `image.trees` | Absolute destinations mapped to source directories. |
-| `image.order` | Integer layer order, default 100; ties sort by component name. |
-| `image.maxLayers` | Positive layer budget, default 1. |
+| Field              | Contract                                                                                                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enable`           | Set to `false` to omit the component.                                                                                                                                  |
+| `packages`         | Packages added to the generation's `sw` environment and PATH. Conflicting paths fail the build.                                                                        |
+| `users`            | Named accounts with required `uid`; optional `gid` (defaults to UID), `shell`, `description`, `extraGroups`. Homes are `/home/<name>`, backed by `/data/homes/<name>`. |
+| `groups`           | Named groups with required `gid` and optional `members`. Each user also gets a same-named private group; supplementary groups must be declared.                        |
+| `services`         | Named nix-supervise system services. Use store paths for executables.                                                                                                  |
+| `image.storePaths` | Extra store sources carried by the image without adding programs to PATH.                                                                                              |
+| `image.files`      | Absolute destinations mapped to source files. Executable modes are preserved.                                                                                          |
+| `image.trees`      | Absolute destinations mapped to source directories.                                                                                                                    |
+| `image.order`      | Integer layer order, default 100; ties sort by component name.                                                                                                         |
+| `image.maxLayers`  | Positive layer budget, default 1.                                                                                                                                      |
 
-A user, group or service can belong to only one component; override its owner
-to change it. Within a component, `image.files` and `image.trees` destinations
-must be normalized absolute paths with no overlapping roots. There are no
-runtime `files` or `seeds` fields. Mutable initialization belongs in application
-startup or provisioning code.
+A user, group or service can belong to only one component; override its owner to
+change it. Within a component, `image.files` and `image.trees` destinations must
+be normalized absolute paths with no overlapping roots. There are no runtime
+`files` or `seeds` fields. Mutable initialization belongs in application startup
+or provisioning code.
 
 ## Refresh and persistence
 
-| Change | Apply with |
-| --- | --- |
-| System packages, accounts or services | Edit the persistent `system.nix`, then run `refresh-system` as root. |
-| Home Manager packages, files or services | Edit `~/.nixcfg/home.nix`, then run `refresh-system` as that user. |
-| Image files, trees, hooks or other `image.*` settings | Rebuild the image and replace the container. |
+| Change                                                | Apply with                                                           |
+| ----------------------------------------------------- | -------------------------------------------------------------------- |
+| System packages, accounts or services                 | Edit the persistent `system.nix`, then run `refresh-system` as root. |
+| Home Manager packages, files or services              | Edit `~/.nixcfg/home.nix`, then run `refresh-system` as that user.   |
+| Image files, trees, hooks or other `image.*` settings | Rebuild the image and replace the container.                         |
 
 Root refresh builds, selects and applies a generation in
 `/nix/var/nix/profiles/system`. Account reconciliation then selects its package
 environment through `/run/current-system`, before services are applied. Boot
 applies the saved root generation, or the factory generation if no usable
-profile exists, without evaluating Nix.
-A failed apply never falls back to another generation.
+profile exists, without evaluating Nix. A failed apply never falls back to
+another generation.
 
 System and Home Manager services default to **`s6.restartOnChange = false`**.
 Set it to `true` per service to restart on refresh when its rendered definition
 or selected environment changes. Otherwise, changes take effect when it next
 starts. Account and package changes leave unrelated services running. Before
-removing an account, reconciliation stops system services using it and the
-Home Manager userdel hook stops its user tree.
+removing an account, reconciliation stops system services using it and the Home
+Manager userdel hook stops its user tree.
 
 Keep `/nix` and `/data` across container replacement to retain generations,
 configuration, accounts and homes. Image contents do not overwrite existing
-persistent configuration. For store initialization details, see
-[upper and lower stores](UPPER_LOWER.md).
+persistent configuration. The complete factory tree at `/opt/defaults`,
+including `fs/` and the runtime scaffold, is seeded once into `/data/app`;
+`/opt/app` links there. Root `reset-system` restores that whole tree while
+retaining links to users' separately managed home configurations. For store
+initialization details, see [upper and lower stores](UPPER_LOWER.md).
 
 ### Accounts and Home Manager
 
 The configuration is authoritative: refresh removes undeclared accounts and
 groups, while retaining homes. Passwords survive updates, but deleting an
 account removes its password record; recreating it starts locked. UID/GID
-conflicts fail before account writes and require an explicit ownership migration.
-When adopting existing volumes, declare every account to retain with its current
-UID and GID. Shadow manages passwords, database locks and subuid/subgid ranges.
+conflicts fail before account writes and require an explicit ownership
+migration. When adopting existing volumes, declare every account to retain with
+its current UID and GID. Shadow manages passwords, database locks and
+subuid/subgid ranges.
 
 Boot creates missing baseline identities (`root`, `sshd`, `nobody`, `nixbld`)
 without Nix evaluation, preserving existing settings and rejecting identity
-conflicts. Refresh also restores missing baseline accounts. The image starts
-as numeric `0:0`; named OCI `--user` overrides cannot resolve against its
-initially empty account databases.
+conflicts. Refresh also restores missing baseline accounts. The image starts as
+numeric `0:0`; named OCI `--user` overrides cannot resolve against its initially
+empty account databases.
 
-The build-only `lib/overlays/home-manager` overlay adds account hooks, factory
-configurations and optional prebuilt profiles. Its options are `buildProfiles`
-(default `true`) and `factoryConfigDir` (default `fs/hm-user`). Apply it after
-runtime constructor overrides; it contributes nothing when HM is absent or disabled.
+The build-only `lib/overlays/home-manager` overlay adds account hooks and
+optional prebuilt profiles. Its `buildProfiles` option defaults to `true`.
+Factory configurations in `fs/hm-user` are copied with the rest of `fs/`. Apply
+the overlay after runtime constructor overrides; it contributes nothing when HM
+is absent or disabled.
 
-HM's useradd hook seeds configuration from `/opt/defaults/hm-user/<name>`, or
-`/opt/defaults/skel/.nixcfg` as a fallback, preserving initialized configuration.
-Startup restores links to existing configurations. Root can initialize an
-existing account without one using `SYSTEM_IMAGE_USER=<name> reset-system`.
-HM boot activation and rebuilding are controlled by `activateOnBoot` and
-`rebuildOnBoot`; see the [template options](../README.md#configure-the-system).
+HM's useradd hook seeds configuration from the mutable `/opt/app/hm-user/<name>`
+factory directory, or `/opt/app/skel/.nixcfg` as a fallback, preserving
+initialized configuration. User reset still restores the image's `/opt/defaults`
+copy. The useradd hook creates `/opt/app/hm-user/<name>` links, which persist in
+`/data/app` across boots and container replacement. Activation and refresh use
+these links, preserving user configurations' `../../hm-base` imports. Root can
+initialize an existing account without a configuration using
+`SYSTEM_IMAGE_USER=<name> reset-system`. HM boot activation and rebuilding are
+controlled by `activateOnBoot` and `rebuildOnBoot`; see the
+[template options](../README.md#configure-the-system).
 
 Executable account hooks belong in `image.files` under `/etc/shadow-maint`.
-Changing hooks requires container replacement; runtime refresh uses the installed
-hooks. Reconciliation runs before service activation, so the userdel hook can
-stop the user's tree without re-entering an active s6 transition.
+Changing hooks requires container replacement; runtime refresh uses the
+installed hooks. Reconciliation runs before service activation, so the userdel
+hook can stop the user's tree without re-entering an active s6 transition.
 
 ### Failures
 
@@ -164,30 +174,32 @@ activate the old HM profile, so user services may remain down on fresh boot.
 
 ## Image layers
 
-Components render after all overlays run. The image contains core and supervision
-layers, ordered component layers, and a final backend/generation layer. Each
-component includes its package, service and image-source closures; store paths
-already in preceding layers are deduplicated. Total layer budgets are capped at 125.
-Inspect `componentLayers` and `componentFilesystems` on the image result.
+Components render after all overlays run. The image contains core and
+supervision layers, ordered component layers, and a final backend/generation
+layer. Each component includes its package, service and image-source closures;
+store paths already in preceding layers are deduplicated. Total layer budgets
+are capped at 125. Inspect `componentLayers` and `componentFilesystems` on the
+image result.
 
 Across components, later layers win overlapping file paths and directories merge
 under OCI rules. Backend files in the final layer take precedence. Shared
-dependencies can affect several layers, so components do not guarantee independent
-rebuilds. Store content is relocated to `/nix-base`; registration retains its real
-`/nix/store` identities and is merged into the persistent store at boot.
+dependencies can affect several layers, so components do not guarantee
+independent rebuilds. Store content is relocated to `/nix-base`; registration
+retains its real `/nix/store` identities and is merged into the persistent store
+at boot.
 
 ## Verification
 
 Run `nix-build tests --no-out-link`, or select a check with `-A <name>`:
 
-| Check | Coverage |
-| --- | --- |
-| `scaffold` | Overlays, overrides, laziness and schema rejection. |
-| `boot` | Saved/factory generation selection and failure handling. |
-| `home-manager` | Build-only hook integration. |
-| `layers` | Deduplication, relocation and unchanged-layer reuse. |
-| `image` | Registration, layer placement and installed files. |
-| `vm` | Container lifecycle and live service updates under podman. |
+| Check          | Coverage                                                   |
+| -------------- | ---------------------------------------------------------- |
+| `scaffold`     | Overlays, overrides, laziness and schema rejection.        |
+| `boot`         | Saved/factory generation selection and failure handling.   |
+| `home-manager` | Build-only hook integration.                               |
+| `layers`       | Deduplication, relocation and unchanged-layer reuse.       |
+| `image`        | Registration, layer placement and installed files.         |
+| `vm`           | Container lifecycle and live service updates under podman. |
 
 The VM needs KVM. Its offline guest uses a prebuilt runtime closure in
 `tests/vm.nix`; add dependencies there when extending runtime scenarios.

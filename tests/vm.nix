@@ -148,6 +148,18 @@ pkgs.testers.runNixOSTest {
         wait_for_boot()
         assert sh("id -u user").strip() == "1000"
         sh("test -f /home/user/.nixcfg/home.nix")
+        sh("test /opt/app -ef /data/app")
+
+    with subtest("the whole working tree is mutable"):
+        for path in ["overlay.nix", "hm-base/default.nix", "skel/.nixcfg/home.nix"]:
+            sh(f"printf '\\n# persistent edit\\n' >> /opt/app/{path}")
+        sh("printf '\\n ' >> /opt/app/hm-base/npins/sources.json")
+        sh("printf '#!/bin/sh\\necho persistent\\n' > /opt/app/bin/persistence-check; "
+           "chmod +x /opt/app/bin/persistence-check")
+        persistent_paths = ("/opt/app/overlay.nix /opt/app/hm-base/default.nix "
+                            "/opt/app/hm-base/npins/sources.json /opt/app/skel/.nixcfg/home.nix "
+                            "/opt/app/bin/persistence-check")
+        working_tree_hashes = sh("sha256sum " + persistent_paths)
 
     with subtest("the daemon builds as a bootstrapped build user"):
         result = sh(
@@ -161,13 +173,13 @@ pkgs.testers.runNixOSTest {
     with subtest("root refresh adds accounts before services without restarting existing users"):
         user_tree_pid = service_pid("tree-user")
         sh(r"sed -i 's|users.user.uid = 1000;|users.user.uid = 1000;\n    users.carol.uid = 1002;|' "
-           "/data/system/nixcfg/system.nix")
-        sh(r"sed -i '/# services.metrics.process.argv = /,+2 s/# //' /data/system/nixcfg/system.nix")
+           "/opt/app/nix/system.nix")
+        sh(r"sed -i '/# services.metrics.process.argv = /,+2 s/# //' /opt/app/nix/system.nix")
         sh(r"sed -i '/services.metrics.process.argv = /i\    services.metrics.s6.restartOnChange = true;' "
-           "/data/system/nixcfg/system.nix")
+           "/opt/app/nix/system.nix")
         sh(r"sed -i '/services.metrics.process.argv = /i\    services.nested.services.worker = { "
            r'process.argv = [ "${runtimePkgs.coreutils}/bin/sleep" "infinity" ]; '
-           r's6.execution.user = "carol"; };' + "' /data/system/nixcfg/system.nix")
+           r's6.execution.user = "carol"; };' + "' /opt/app/nix/system.nix")
         sh("refresh-system")
         assert service_pid("tree-user") == user_tree_pid
         assert "system-resources" not in services()
@@ -175,6 +187,7 @@ pkgs.testers.runNixOSTest {
         assert sh(f"stat -c %u /proc/{worker_pid}").strip() == "1002"
         wait_for_port(9100)
         assert sh("id -u carol").strip() == "1002"
+        sh("grep -q 'persistent edit' /home/carol/.nixcfg/home.nix")
         assert "apply-carol" in services()
         sh("test -f /home/carol/.local/state/nix/profiles/home-manager/activate")
 
@@ -187,7 +200,7 @@ pkgs.testers.runNixOSTest {
         wait_for_port(8080)
 
     with subtest("service command edits take effect on refresh"):
-        sh("sed -i 's/9100/9101/g' /data/system/nixcfg/system.nix && refresh-system")
+        sh("sed -i 's/9100/9101/g' /opt/app/nix/system.nix && refresh-system")
         wait_for_port(9101)
         machine.fail("podman exec sys bash -c 'exec 3<>/dev/tcp/127.0.0.1/9100'")
         sh("sed -i 's/8080/8081/g' /home/user/.nixcfg/extras.nix && refresh-system", user="1000:1000")
@@ -206,11 +219,34 @@ pkgs.testers.runNixOSTest {
         wait_for_port(9101)
         wait_for_port(8081)
 
+    with subtest("the working tree and user links survive container replacement"):
+        machine.succeed("podman rm --force sys")
+        machine.succeed(
+            "podman run --detach --name sys "
+            "--volume /var/lib/nix-volume/nix:/nix --volume /var/lib/data-volume:/data "
+            "system-image:latest"
+        )
+        wait_for_boot()
+        sh("test -L /opt/app/hm-user/user && test -L /opt/app/hm-user/carol")
+        assert sh("sha256sum " + persistent_paths) == working_tree_hashes
+        assert sh("/opt/app/bin/persistence-check").strip() == "persistent"
+        sh("test /opt/app/hm-user/user/home.nix -ef /home/user/.nixcfg/home.nix")
+        sh("test /opt/app/hm-user/carol/home.nix -ef /home/carol/.nixcfg/home.nix")
+        wait_for_port(8081)
+        sh("refresh-system", user="1000:1000")
+        wait_for_port(8081)
+
     with subtest("reset stops removed-user services and retains unrelated user trees"):
         user_tree_pid = service_pid("tree-user")
         worker_pid = service_pid("nested.worker")
-        sh("cd /data/system/nixcfg && reset-system")
-        sh("cmp /data/system/nixcfg/system.nix /opt/defaults/nix/system.nix")
+        sh("cd /opt/app/nix && reset-system")
+        sh("cmp /opt/app/nix/system.nix /opt/defaults/nix/system.nix")
+        for path in ["overlay.nix", "hm-base/default.nix", "hm-base/npins/sources.json",
+                     "skel/.nixcfg/home.nix"]:
+            sh(f"cmp /opt/app/{path} /opt/defaults/{path}")
+        sh("test ! -e /opt/app/bin/persistence-check")
+        sh("test /opt/app/hm-user/user/home.nix -ef /home/user/.nixcfg/home.nix")
+        sh("test -f /home/user/.nixcfg/extras.nix")
         assert "carol:" not in sh("cat /data/etc/passwd")
         sh(f"test ! -e /proc/{worker_pid}")
         assert service_pid("tree-user") == user_tree_pid

@@ -3,4 +3,6 @@
 set -eu
 
 : "${SUBJECT:?userdel did not provide SUBJECT}"
-@rm@ -f "/opt/app/hm-user/${SUBJECT}"
+if test -L "/opt/app/hm-user/${SUBJECT}"; then
+  @rm@ -f "/opt/app/hm-user/${SUBJECT}"
+fi

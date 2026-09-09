@@ -8,23 +8,22 @@
 environments as OCI (Docker, etc.) images.
 
 `fs/` holds the initial configuration for the running system, including the Nix
-expression used to rebuild it. These files are seeded into a mutable
-configuration folder used at runtime.
+expression used to rebuild it. The tree is seeded into persistent `/data/app` on
+first boot and linked at `/opt/app`.
 
-[`lib/image.nix`](lib/image.nix) builds the image, copying `fs/` into its `/opt`
-tree. It also pre-seeds Nix store content, including a prebuilt default system
-generation, and can install miscellaneous system files or directories through
-OCI layers. This content, such as configuration files installed under `/etc`, is
-fixed at image build time.
+[`lib/image.nix`](lib/image.nix) builds the image, keeping the factory copy of
+`fs/` read-only in `/opt/defaults`. It also pre-seeds Nix store content,
+including a prebuilt default system generation, and can install miscellaneous
+system files or directories through OCI layers. This content, such as
+configuration files installed under `/etc`, is fixed at image build time.
 
 [`nix/default.nix`](nix/default.nix) determines what `image.nix` should pre-seed
 in addition to the copied `fs/` tree. It takes `fs/nix/system.nix` and composes
 it with build-only overlays that declare the aforementioned fixed image content.
 The result is passed to `image.nix` to create the image's OCI layers.
 
-Inside the running container, root can edit the configuration in `/opt`, copied
-from `fs/` at image build time, and run `refresh-system` to change packages,
-accounts, and services.
+Inside the running container, root can edit the configuration in `/opt/app` and
+run `refresh-system` to change packages, accounts, and services.
 
 `/data` holds accounts, homes, and persistent configuration, while `/nix` holds
 the store and saved generations.
@@ -50,14 +49,14 @@ your own image:
 integration included in the template and an example of how runtime configuration
 and build-only extensions fit together:
 
-| Path                         | Role                                                                         |
-| ---------------------------- | ---------------------------------------------------------------------------- |
-| `fs/nix/home-manager.nix`    | Runtime component for managed accounts and user supervision                  |
-| `fs/nix/scripts/`            | User activation script available to later generations                        |
-| `fs/hm-base/`                | Shared Home Manager defaults                                                 |
-| `fs/hm-user/<name>/`         | Per-user factory configuration                                               |
-| `fs/skel/.nixcfg/`           | Fallback configuration for new users                                         |
-| `lib/overlays/home-manager/` | Build-only account hooks, factory config installation, and profile prebuilds |
+| Path                         | Role                                                        |
+| ---------------------------- | ----------------------------------------------------------- |
+| `fs/nix/home-manager.nix`    | Runtime component for managed accounts and user supervision |
+| `fs/nix/scripts/`            | User activation script available to later generations       |
+| `fs/hm-base/`                | Shared Home Manager defaults                                |
+| `fs/hm-user/<name>/`         | Per-user factory configuration                              |
+| `fs/skel/.nixcfg/`           | Fallback configuration for new users                        |
+| `lib/overlays/home-manager/` | Build-only account hooks and profile prebuilds              |
 
 The runtime pieces live in `fs/` so they remain available to rebuild and edit.
 The image overlay lives in `lib/overlays/`, which is not copied into the running
@@ -142,7 +141,7 @@ Nix store beneath a container-specific writable store.
 As root, edit the persistent system configuration and apply it:
 
 ```sh
-$EDITOR /data/system/nixcfg/system.nix
+$EDITOR /opt/app/nix/system.nix
 refresh-system
 ```
 
@@ -174,7 +173,7 @@ definition changes on refresh. Otherwise, changes take effect when it next
 starts.
 
 Use `reset-system` to restore and apply the factory configuration from
-`/opt/defaults`. Run as root, it resets the system configuration; run as a
+`/opt/defaults`. Run as root, it resets the shared `/data/app` tree; run as a
 managed user, it resets that user's Home Manager configuration. Root can also
 reset a user's configuration with `SYSTEM_IMAGE_USER=<name> reset-system`.
 
@@ -191,5 +190,5 @@ details.
 | `/nix`          | Persistent Nix store, database, system profile, and Home Manager generations |
 | `/nix-base`     | Read-only image seed used to initialize and update `/nix`                    |
 | `/opt/defaults` | Read-only factory configuration                                              |
-| `/opt/app`      | Per-container working tree; user and system configs link into `/data`        |
+| `/opt/app`      | Persistent working tree at `/data/app`                                       |
 | `/run`          | Disposable sockets, live S6 state, and the selected `/run/current-system`    |

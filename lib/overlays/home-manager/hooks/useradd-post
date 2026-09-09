@@ -27,9 +27,9 @@ if test -d "${config_dir}"; then
   config_entry="$(find "${config_dir}" -mindepth 1 -maxdepth 1 -print -quit)"
 fi
 if test ! -d "${config_dir}" || test -z "${config_entry}"; then
-  seed_dir="/opt/defaults/hm-user/${SUBJECT}"
-  if test ! -d "${seed_dir}"; then
-    seed_dir=/opt/defaults/skel/.nixcfg
+  seed_dir="/opt/app/hm-user/${SUBJECT}"
+  if test ! -d "${seed_dir}" || test -L "${seed_dir}"; then
+    seed_dir=/opt/app/skel/.nixcfg
   fi
   mkdir -p "${config_dir}"
   cp -R "${seed_dir}/." "${config_dir}/"
@@ -41,5 +41,6 @@ fi
 
 if test -f "${config_dir}/home.nix"; then
   mkdir -p /opt/app/hm-user
+  rm -rf "/opt/app/hm-user/${SUBJECT}"
   ln -sfnT "${config_dir}" "/opt/app/hm-user/${SUBJECT}"
 fi
