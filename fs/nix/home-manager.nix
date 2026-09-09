@@ -29,7 +29,7 @@ let
       userHome = "/home/${name}";
       rendered = hostAdapterLibrary.renderS6Services {
         treeName = name;
-        treeRunner = nixSupervisePackages.treeRunner;
+        inherit (nixSupervisePackages) treeRunner;
         tree = {
           owner = name;
           runtime = {

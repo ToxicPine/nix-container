@@ -53,7 +53,14 @@ let
     inherit pkgs;
     modules = [
       {
-        supervision.system = {
+        options.supervision.system.services = lib.mkOption {
+          type = lib.types.attrsOf (
+            lib.types.submoduleWith {
+              modules = [ { config.s6.restartOnChange = lib.mkDefault true; } ];
+            }
+          );
+        };
+        config.supervision.system = {
           tree.runtimeDirectory = "/run/nix-supervise/system";
           stateDirectory = "/data/system/supervision";
           producer = "system-image";
@@ -99,6 +106,6 @@ assert builtins.seq accounts true;
     users
     groups
     ;
-  config = evaluated.config;
+  inherit (evaluated) config;
   image = schema.image composed.image;
 }

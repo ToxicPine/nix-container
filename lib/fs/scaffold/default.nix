@@ -45,7 +45,7 @@ let
     // {
       # Check the complete overlay result outside the fixed point, before its
       # public fields are consumed. Otherwise unknown fields disappear here.
-      valid = builtins.seq (schema.composition result) true;
+      valid = builtins.seq (schema.scaffold result) true;
       # Keep the scope's attribute names and helper functions independent of
       # overlays. Looking up final.infuse must not evaluate that same overlay.
       inherit (result)

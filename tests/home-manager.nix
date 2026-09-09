@@ -29,7 +29,7 @@ let
     configuration
     (
       { infuse, ... }:
-      final: prev:
+      _final: prev:
       infuse prev {
         components.home-manager.enable.__assign = false;
       }
@@ -39,7 +39,26 @@ let
   base = evaluate [ ];
   hm = enabled.components.home-manager;
   addHook = hm.image.files."/etc/shadow-maint/useradd-post.d/60-home-manager";
+  home = (import sources.home-manager { inherit pkgs; }).lib.homeManagerConfiguration {
+    inherit pkgs;
+    modules = [
+      (import ../fs/hm-base { inherit sources; })
+      {
+        home.username = "alice";
+        home.homeDirectory = "/home/alice";
+        supervision.services = {
+          automatic.process.argv = [ "${pkgs.hello}/bin/hello" ];
+          manual = {
+            process.argv = [ "${pkgs.hello}/bin/hello" ];
+            s6.restartOnChange = false;
+          };
+        };
+      }
+    ];
+  };
 in
+assert home.config.supervision.services.automatic.s6.restartOnChange;
+assert !home.config.supervision.services.manual.s6.restartOnChange;
 assert disabled.generation.drvPath == base.generation.drvPath;
 assert (evaluate [ imageOverlay ]).generation.drvPath == base.generation.drvPath;
 assert runtime.generation.drvPath == enabled.generation.drvPath;

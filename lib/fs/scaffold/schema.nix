@@ -4,7 +4,7 @@
 let
   check =
     condition: message: value:
-    if condition then value else throw "system composition: ${message}";
+    if condition then value else throw "system scaffold: ${message}";
   keys =
     label: allowed: value:
     check (builtins.isAttrs value) "${label} must be an attribute set" (
@@ -107,7 +107,7 @@ let
 in
 {
   inherit check;
-  composition = keys "system" [
+  scaffold = keys "system" [
     "pkgs"
     "sources"
     "lib"

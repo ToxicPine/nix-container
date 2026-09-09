@@ -146,16 +146,35 @@ seed_account_file() {
   "${BUSYBOX}" mv "${staging_path}" "${destination_path}"
 }
 
-# Empty account files and account-tool defaults initialize a new data volume.
-# Existing databases are retained; Shadow creates missing baseline identities.
+create_account_file() {
+  account_path="${1:?missing account path}"
+  account_mode="${2:?missing account mode}"
+  destination_path="${ACCOUNT_DATA_DIR}/${account_path}"
+  staging_path="${destination_path}.seed.$$"
+
+  if test -e "${destination_path}" || test -L "${destination_path}"; then
+    return 0
+  fi
+
+  "${BUSYBOX}" rm -f "${staging_path}"
+  : >"${staging_path}"
+  "${BUSYBOX}" chmod "${account_mode}" "${staging_path}"
+  "${BUSYBOX}" mv "${staging_path}" "${destination_path}"
+}
+
+# A new data volume starts from empty account databases and the image's
+# account-tool defaults. The databases are created rather than copied from
+# /etc: some runtimes, podman among them, write an entry for the container
+# user into the image's /etc files, and those must not become persistent
+# accounts. Existing databases are retained; bootstrap creates what is missing.
 "${BUSYBOX}" mkdir -p "${ACCOUNT_DATA_DIR}/default"
 "${BUSYBOX}" chmod 0755 "${ACCOUNT_DATA_DIR}" "${ACCOUNT_DATA_DIR}/default"
-seed_account_file passwd 0644
-seed_account_file group 0644
-seed_account_file shadow 0600
-seed_account_file gshadow 0600
-seed_account_file subuid 0644
-seed_account_file subgid 0644
+create_account_file passwd 0644
+create_account_file group 0644
+create_account_file shadow 0600
+create_account_file gshadow 0600
+create_account_file subuid 0644
+create_account_file subgid 0644
 seed_account_file login.defs 0644
 seed_account_file default/useradd 0644
 "${BUSYBOX}" mkdir -p "${DATA_DIR}/homes"

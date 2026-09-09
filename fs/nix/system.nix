@@ -2,7 +2,7 @@
 { infuse, ... }:
 final: prev:
 let
-  pkgs = final.pkgs;
+  inherit (final) pkgs;
 
   local = {
     image.order = 10;

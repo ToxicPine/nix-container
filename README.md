@@ -78,7 +78,7 @@ infuse prev {
 This configuration is the only source of accounts, so a user or group it does
 not declare is removed the next time the configuration is applied. Homes are
 kept, and passwords, which live in `/data/etc`, survive updates. The
-[composition contract](docs/COMPOSITION.md) documents the complete API.
+[scaffold contract](docs/SCAFFOLD.md) documents the complete API.
 
 Give a user an initial Home Manager configuration at
 `fs/hm-user/<name>/home.nix`, declaring services under `supervision.services`
@@ -164,6 +164,10 @@ supervisor, and activating Home Manager. Removing the declaration again stops
 her services and removes the account while keeping her home. A change to
 accounts or packages restarts every user's services, whereas a change that
 only touches system services updates those services alone.
+
+System and Home Manager services default to `s6.restartOnChange = true`, so
+refresh restarts services whose definitions change. Set it to `false` for a
+service that needs a manually coordinated restart.
 
 Each user's live configuration is stored in `~/.nixcfg`. The user can change
 packages, settings, and `supervision.services`, then apply the result:

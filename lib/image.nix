@@ -375,11 +375,11 @@ let
   '';
 
   imageArgs = {
-    name = imageConfig.name;
+    inherit (imageConfig) name;
     tag = "latest";
     inherit nixStorePrefix;
 
-    layers = layerState.layers;
+    inherit (layerState) layers;
     copyToRoot = baseRootFilesystem;
     maxLayers = rootFilesystemLayerCount;
 

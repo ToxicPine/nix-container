@@ -69,7 +69,7 @@ is not consulted to decide
 what runs. The account reconciler removes every account the configuration
 does not declare, using `userdel`. The hook skips its service stop when
 `SYSTEM_RESOURCES_APPLY=1`, avoiding a nested s6 transition.
-See `docs/COMPOSITION.md` for the full composition and ownership contract.
+See `docs/SCAFFOLD.md` for the full scaffold and ownership contract.
 
 ## What is immutable
 
@@ -94,8 +94,11 @@ here reimplements them.
 Run the boot-selection regression tests from the repository root:
 
 ```sh
-nix shell nixpkgs/nixpkgs-unstable#python3 -c python3 -m unittest discover -s tests -p test_boot.py -v
+nix-build tests -A boot --no-out-link
 ```
+
+The full container lifecycle, including boot from the factory generation and
+from a saved profile, runs under `nix-build tests -A vm`.
 
 The pinned nix-supervise branch also checks standalone generation assertions
 and verifies that changed child apply commands and triggers change the apply

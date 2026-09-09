@@ -23,7 +23,7 @@ let
         // {
           ${name} =
             result.${name} or {
-              gid = user.gid;
+              inherit (user) gid;
               members = [ ];
             };
         }

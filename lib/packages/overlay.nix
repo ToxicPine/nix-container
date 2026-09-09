@@ -1,6 +1,6 @@
 { pkgs }:
 
-final: _prev:
+_final: _prev:
 
 let
   provision-user-home = pkgs.callPackage ./provision-user-home { };

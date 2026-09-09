@@ -10,7 +10,7 @@ lib.foldl'
       layer = n2c.buildLayer (
         (builtins.removeAttrs definition [ "name" ])
         // {
-          layers = state.layers;
+          inherit (state) layers;
         }
       );
     in
