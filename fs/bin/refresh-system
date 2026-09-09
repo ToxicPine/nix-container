@@ -60,9 +60,17 @@ if [[ "${user}" = "root" ]]; then
   fi
 
   result=$(build_generation)
-  mkdir -p "${profile%/*}"
-  nix-env -p "${profile}" --set "${result}"
-  exec "${result}/bin/apply"
+  # Keep the saved profile and live application in the same critical section.
+  # The generation's apply command inherits the lock instead of reacquiring it.
+  exec s6-setlock -w /run/nix-supervise/system/apply.lock \
+    env SYSTEM_IMAGE_APPLY_LOCKED=1 bash -c '
+      set -euo pipefail
+      profile=$1
+      result=$2
+      mkdir -p "${profile%/*}"
+      nix-env -p "${profile}" --set "${result}"
+      exec "${result}/bin/apply"
+    ' refresh-system "${profile}" "${result}"
 fi
 
 home_nix="${APP}/hm-user/${user}/home.nix"
