@@ -7,12 +7,17 @@ lib.foldl'
   (
     state: definition:
     let
-      layer = n2c.buildLayer (
+      rawLayer = n2c.buildLayer (
         (builtins.removeAttrs definition [ "name" ])
         // {
           inherit (state) layers;
         }
       );
+      # Bound inherited metadata before later layers expand it again.
+      # Workaround: https://github.com/nlewo/nix2container/issues/205
+      layer = rawLayer // {
+        nestedLayers = lib.unique rawLayer.nestedLayers;
+      };
     in
     {
       layers = state.layers ++ [ layer ];

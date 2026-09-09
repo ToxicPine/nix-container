@@ -1,10 +1,11 @@
-# A small real n2c image tests explicit deduplication, relocation, and reuse.
+# Real n2c images test explicit deduplication, relocation, reuse, and scaling.
 # nix-build tests/layers.nix --no-out-link
 let
   sources = import ../fs/hm-base/npins;
   pkgs = import sources.nixpkgs { };
   inherit (pkgs) lib;
   n2c = import ../n2c { inherit pkgs; };
+  buildLayers = import ../lib/build-oci-layers.nix { inherit lib n2c; };
   shared = pkgs.writeText "layer-shared" "shared dependency";
   first = pkgs.writeText "layer-first" "first references ${shared}";
   second = pkgs.writeText "layer-second" "second references ${shared}";
@@ -17,7 +18,7 @@ let
       nixStorePrefix = prefix;
       inherit
         (
-          ((import ../lib/build-oci-layers.nix { inherit lib n2c; }) [
+          (buildLayers [
             {
               name = "first";
               deps = [ first ];
@@ -38,16 +39,30 @@ let
         layers
         ;
     };
+  # This many explicit layers previously exhausted the image command's
+  # argument limit through repeated nestedLayers metadata (upstream #205).
+  many = n2c.buildImage {
+    name = "layer-scaling-regression";
+    nixStorePrefix = prefix;
+    layers =
+      (buildLayers (
+        lib.genList (index: {
+          name = "part-${toString index}";
+          deps = [ (pkgs.writeText "layer-part-${toString index}" "references ${shared}") ];
+          nixStorePrefix = prefix;
+        }) 15
+      )).layers;
+  };
 
 in
 pkgs.runCommand "system-component-layer-tests" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-  python3 - ${make "before"} ${make "after"} ${shared} <<'PY'
+  python3 - ${make "before"} ${make "after"} ${many} ${shared} <<'PY'
   import json
   import sys
 
-  before, after = [json.load(open(path)) for path in sys.argv[1:3]]
-  shared = sys.argv[3]
-  for image in (before, after):
+  before, after, many = [json.load(open(path)) for path in sys.argv[1:4]]
+  shared = sys.argv[4]
+  for image in (before, after, many):
       seen = set()
       for layer in image["layers"]:
           for entry in layer["paths"]:
@@ -61,7 +76,8 @@ pkgs.runCommand "system-component-layer-tests" { nativeBuildInputs = [ pkgs.pyth
   assert len(before_layers) == len(after_layers) == 3
   assert [l["digest"] for l in before_layers[:2]] == [l["digest"] for l in after_layers[:2]]
   assert before_layers[2]["digest"] != after_layers[2]["digest"]
-  print("Explicit layer deduplication, relocation and unchanged-layer reuse passed")
+  assert len([l for l in many["layers"] if l["paths"]]) == 15
+  print("Explicit layer deduplication, relocation, unchanged-layer reuse and 15-layer build passed")
   PY
   touch "$out"
 ''
