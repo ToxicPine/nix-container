@@ -2,58 +2,76 @@
 
 ![Project Status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
-> [!WARNING]
-> This project is experimental and alpha-quality.
+> [!WARNING] This project is experimental and alpha-quality.
 
 `nix-container` is a template for building mutable, multi-user Linux
 environments as OCI (Docker, etc.) images.
 
-The important difference from a conventional container image is that the
-system is not frozen at build time. Inside a running container:
+`fs/` holds the initial configuration for the running system, including the Nix
+expression used to rebuild it. These files are seeded into a mutable
+configuration folder used at runtime.
 
-- a system configuration, owned by root, declares the accounts, system-wide
-  packages, and services, and can be rebuilt and applied in place without
-  replacing the image;
-- each declared user has a declarative [Nix](https://nix.dev/) configuration,
-  applied by [Home Manager](https://github.com/nix-community/home-manager),
-  that determines the packages and settings in their environment; and
-- both configurations can declare long-running services, which
-  [`nix-supervise`](https://github.com/ToxicPine/nix-supervise#declaring-services-and-supervision-policy)
-  starts and supervises.
+[`lib/image.nix`](lib/image.nix) builds the image, copying `fs/` into its `/opt`
+tree. It also pre-seeds Nix store content, including a prebuilt default system
+generation, and can install miscellaneous system files or directories through
+OCI layers. This content, such as configuration files installed under `/etc`, is
+fixed at image build time.
 
-The environment can therefore change at runtime and survive container
-replacement: `/data` holds accounts, homes, and configuration, while `/nix`
-holds packages installed or built in the running container.
+[`nix/default.nix`](nix/default.nix) determines what `image.nix` should pre-seed
+in addition to the copied `fs/` tree. It takes `fs/nix/system.nix` and composes
+it with build-only overlays that declare the aforementioned fixed image content.
+The result is passed to `image.nix` to create the image's OCI layers.
+
+Inside the running container, root can edit the configuration in `/opt`, copied
+from `fs/` at image build time, and run `refresh-system` to change packages,
+accounts, and services.
+
+`/data` holds accounts, homes, and persistent configuration, while `/nix` holds
+the store and saved generations.
 
 ## Template layout
 
 Clone this repository, customize the following files, and build it to produce
 your own image:
 
-| Path | Customize here |
-| --- | --- |
-| `fs/nix/system.nix` | Packages, accounts, services, image name, and exposed ports |
-| `fs/nix/home-manager.nix` | How Home Manager runs and activates each user |
-| `fs/hm-base/` | Home Manager defaults shared by every user |
-| `fs/hm-user/<name>/` | Initial packages and services for a declared user |
-| `fs/skel/.nixcfg/` | Initial Home Manager config for users without one |
-| `fs/bin/` | `refresh-system` and `reset-system` |
-| `fs/overlay.nix` | Additional or overridden Nix packages |
-| `lib/` | Image build, system evaluation, account, and supervision machinery |
+| Path                | Customize here                                             |
+| ------------------- | ---------------------------------------------------------- |
+| `fs/`               | Seed configuration and tools for the running system        |
+| `fs/nix/system.nix` | System packages, accounts, and services                    |
+| `fs/bin/`           | Commands available in the running system                   |
+| `fs/overlay.nix`    | Additional or overridden Nix packages                      |
+| `lib/overlays/`     | Build-only extensions using the component image API        |
+| `nix/default.nix`   | Compose the overlays and build the image with its defaults |
+| `lib/`              | Image, persistence, account, and supervision machinery     |
 
-Content under `fs/` becomes the working tree at `/opt/app` and the read-only
-factory snapshot at `/opt/defaults`.
+### Home Manager integration
+
+[Home Manager](https://github.com/nix-community/home-manager) is an optional
+integration included in the template and an example of how runtime configuration
+and build-only extensions fit together:
+
+| Path                         | Role                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `fs/nix/home-manager.nix`    | Runtime component for managed accounts and user supervision                  |
+| `fs/nix/scripts/`            | User activation script available to later generations                        |
+| `fs/hm-base/`                | Shared Home Manager defaults                                                 |
+| `fs/hm-user/<name>/`         | Per-user factory configuration                                               |
+| `fs/skel/.nixcfg/`           | Fallback configuration for new users                                         |
+| `lib/overlays/home-manager/` | Build-only account hooks, factory config installation, and profile prebuilds |
+
+The runtime pieces live in `fs/` so they remain available to rebuild and edit.
+The image overlay lives in `lib/overlays/`, which is not copied into the running
+system. It uses the image API to install fixed support such as `useradd` hooks.
+Composing this build-only overlay with the system configuration from `fs/` in
+`nix/default.nix` is the pattern for adding integrations: runtime sources go in
+`fs/`, while build-only code stays in `lib/overlays/`.
 
 ## Usage
 
 ### Configure the system
 
-[`fs/nix/system.nix`](fs/nix/system.nix) describes the system as a set of
-components, each contributing packages, users, groups, services, and files for
-the image. It is written as an overlay in the style of SixOS using
-[Infuse](https://codeberg.org/amjoseph/infuse.nix), whose `__init` and
-`__append` operators add to the previous definition rather than replacing it;
-the comments in the file show the plain Nix equivalent.
+Use [`fs/nix/system.nix`](fs/nix/system.nix) to declare system-wide packages,
+accounts, and services.
 
 ```nix
 { infuse, ... }:
@@ -61,58 +79,30 @@ final: prev:
 infuse prev {
   components.local.__init = {
     packages = [ final.pkgs.ripgrep final.pkgs.rsync ];
-    services.metrics.process.argv = [
-      "${final.pkgs.python3}/bin/python" "-m" "http.server" "9100"
+    users.alice.uid = 1000;
+    services.web.process.argv = [
+      "${final.pkgs.python3}/bin/python" "-m" "http.server" "8080"
     ];
   };
-  components.home-manager.__init = final.callComponent ./home-manager.nix {
-    users = {
-      alice.uid = 1000;
-      bob = { uid = 1001; rebuildOnBoot = true; };
-    };
-  };
-  image.exposedPorts.__append = [ 9100 ];
+  image.exposedPorts.__append = [ 8080 ];
 }
 ```
 
-This configuration is the only source of accounts, so a user or group it does
-not declare is removed the next time the configuration is applied. Homes are
-kept, and passwords, which live in `/data/etc`, survive updates. The
-[scaffold contract](docs/SCAFFOLD.md) documents the complete API.
+### Home Manager options
 
-Give a user an initial Home Manager configuration at
-`fs/hm-user/<name>/home.nix`, declaring services under `supervision.services`
-in the form that `nix-supervise` documents:
+Set Home Manager boot behavior on its component in `fs/nix/system.nix` or per
+user:
 
-```nix
-{ pkgs, ... }:
-{
-  imports = [ (import ../../hm-base { }) ];
-
-  home.packages = [ pkgs.python3 ];
-
-  supervision.services.web.process.argv = [
-    "${pkgs.python3}/bin/python"
-    "-m"
-    "http.server"
-    "8080"
-  ];
-}
-```
-
-This profile installs Python for Alice and starts `web` among her services,
-which run under a supervisor of her own that the system starts for her. How
-Home Manager behaves at boot is set on the component, or per user:
-
-| Option | Meaning |
-| --- | --- |
-| `rebuildOnBoot` | Rebuild and activate the user's persistent `~/.nixcfg` on every boot. |
-| `activateOnBoot` | When `rebuildOnBoot` is off, activate the existing generation on boot. A user with no generation is built once. |
-| `buildProfiles` | Set in `lib/overlays/home-manager`: prebuild profiles into the image for declared users that have an `fs/hm-user/<name>/home.nix`. |
+| Option           | Meaning                                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `rebuildOnBoot`  | Rebuild and activate the user's persistent `~/.nixcfg` on every boot.                                            |
+| `activateOnBoot` | When `rebuildOnBoot` is off, activate a saved or prebuilt generation on boot. A user with neither is built once. |
 
 Rebuilding includes activation, so `activateOnBoot` has no effect while
-`rebuildOnBoot` is enabled. The template turns rebuilding off and activation
-on, which keeps boot from having to evaluate anyone's configuration.
+`rebuildOnBoot` is enabled. The template turns rebuilding off and activation on.
+The image overlay prebuilds profiles for users with an
+`fs/hm-user/<name>/home.nix`; set `buildProfiles = false` on its import in
+`nix/default.nix` to skip that step.
 
 ### Build and run
 
@@ -134,43 +124,41 @@ docker run --detach \
 For Podman, build `copyToPodman` instead. The generic `copyTo` target accepts
 other Skopeo destinations, including OCI layouts and registries.
 
-Both volumes are required. The account database lives on the data volume
-rather than in the image, which is why `docker exec --user` has to be given a
-numeric ID rather than a name.
+Both volumes are required. Account names live in `/data/etc`, so use numeric IDs
+with `docker exec --user`. To open a shell as Alice:
+
+```sh
+docker exec --interactive --tty --user 1000:1000 \
+  --env HOME=/home/alice --env USER=alice system-image bash
+```
 
 ### Reuse a read-only host Nix store
 
-See [Upper/lower Nix store](docs/UPPER_LOWER.md) to reuse the host's
-read-only Nix store beneath a container-specific writable store.
+See [upper/lower Nix store](docs/UPPER_LOWER.md) to reuse the host's read-only
+Nix store beneath a container-specific writable store.
 
 ### Change the running system
 
-Each build of the system configuration produces a generation, a store path
-holding the services, accounts, and package set to apply. The image carries
-one such generation, and at boot the container applies the most recently
-built one if `/nix/var/nix/profiles/system` records it, falling back to the
-image's own, without evaluating any Nix. To change the system, root edits the
-persistent copy of the configuration and applies it:
+As root, edit the persistent system configuration and apply it:
 
 ```sh
-$EDITOR /data/system/nixcfg/system.nix   # for example, users.carol.uid = 1002
+$EDITOR /data/system/nixcfg/system.nix
 refresh-system
 ```
 
-This builds a new generation, records it in the profile, and brings the
-running system in line with it, which here means creating Carol's account,
-copying the initial configuration into her `~/.nixcfg`, starting her
-supervisor, and activating Home Manager. Removing the declaration again stops
-her services and removes the account while keeping her home. A change to
-accounts or packages restarts every user's services, whereas a change that
-only touches system services updates those services alone.
+For example, add `users.carol.uid = 1002;` to the Home Manager component's
+arguments to create Carol's account, seed her configuration, and start her user
+services.
 
-System and Home Manager services default to `s6.restartOnChange = true`, so
-refresh restarts services whose definitions change. Set it to `false` for a
-service that needs a manually coordinated restart.
+Refresh builds a generation, records it in `/nix/var/nix/profiles/system`, and
+applies its accounts, packages, and services. Account or package changes also
+restart dependent services; changes to service definitions update the affected
+services. Boot applies the saved system generation, or the image's factory
+generation if none is available, without rebuilding the system configuration.
 
-Each user's live configuration is stored in `~/.nixcfg`. The user can change
-packages, settings, and `supervision.services`, then apply the result:
+Each Home Manager user's live configuration is stored in `~/.nixcfg`. The user
+can change packages, settings, and `supervision.services`, then apply the
+result:
 
 ```sh
 $EDITOR ~/.nixcfg/home.nix
@@ -180,24 +168,26 @@ refresh-system
 Home Manager builds the new generation and `nix-supervise` reconciles its
 services. Adding, removing, or changing a service declaration starts, stops, or
 updates the corresponding supervised process without rebuilding the image.
+Services default to `s6.restartOnChange = true`; set it to `false` to defer a
+changed definition until the service next starts.
 
-Use `reset-system` to restore the factory configuration from `/opt/defaults`.
-Run as root it resets the system configuration, and run with
-`SYSTEM_IMAGE_USER=<name>` it resets that user's Home Manager configuration
-instead.
+Use `reset-system` to restore and apply the factory configuration from
+`/opt/defaults`. Run as root, it resets the system configuration; run as a
+managed user, it resets that user's Home Manager configuration. Root can also
+reset a user's configuration with `SYSTEM_IMAGE_USER=<name> reset-system`.
 
-A failed build changes nothing, whereas a failed apply leaves the new
-generation recorded and possibly half applied; in either case, fix the
-configuration and refresh again. To see what is currently running under the
-system supervisor, run `s6-rc -l /run/nix-supervise/system/live -a list`.
+A failed build leaves the running system alone. A failed apply can leave partial
+changes and the new system generation selected; correct the cause and refresh
+again. See the [scaffold contract](docs/SCAFFOLD.md#failures) for recovery
+details.
 
 ## Runtime model
 
-| Path | Role |
-| --- | --- |
-| `/data` | Persistent accounts, homes, user and system configuration, service state, and logs |
-| `/nix` | Persistent Nix store, database, root profile, and Home Manager generations |
-| `/nix-base` | Read-only image seed used to initialize an empty `/nix` |
-| `/opt/defaults` | Read-only factory configuration from `fs/` |
-| `/opt/app` | Per-container working tree; user and system configs link into `/data` |
-| `/run` | Disposable sockets, live S6 state, and the selected `/run/current-system` |
+| Path            | Role                                                                         |
+| --------------- | ---------------------------------------------------------------------------- |
+| `/data`         | Persistent accounts, homes, configuration, service state, and logs           |
+| `/nix`          | Persistent Nix store, database, system profile, and Home Manager generations |
+| `/nix-base`     | Read-only image seed used to initialize and update `/nix`                    |
+| `/opt/defaults` | Read-only factory configuration                                              |
+| `/opt/app`      | Per-container working tree; user and system configs link into `/data`        |
+| `/run`          | Disposable sockets, live S6 state, and the selected `/run/current-system`    |
